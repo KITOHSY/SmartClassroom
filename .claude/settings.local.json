@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dir C:UsersuserDesktopHongsunProgrammingSmartClassroom *)",
+      "WebSearch",
+      "WebFetch(domain:sso.cnu.ac.kr)",
+      "WebFetch(domain:portal.cnu.ac.kr)",
+      "Bash(Find-Item -Path \"C:\\\\Users\\\\user\\\\Desktop\\\\Hongsun\\\\Programming\\\\moonlight-qt\\\\app.pro\")",
+      "Bash(Get-Content -Head 50)"
+    ]
+  }
+}

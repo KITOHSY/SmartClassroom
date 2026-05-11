@@ -8,7 +8,14 @@
       "Bash(Find-Item -Path \"C:\\\\Users\\\\user\\\\Desktop\\\\Hongsun\\\\Programming\\\\moonlight-qt\\\\app.pro\")",
       "Bash(Get-Content -Head 50)",
       "Bash(Get-ChildItem -Recurse -Force)",
-      "Bash(Select-Object FullName)"
+      "Bash(Select-Object FullName)",
+      "Bash(Get-ChildItem -Path \"D:\\\\Hongsun\\\\SmartClassroom\" -Recurse -Directory)",
+      "Bash(Select-Object -First 30)",
+      "Bash(Format-Table FullName)",
+      "Bash(curl -s http://localhost:8000/openapi.json)",
+      "Bash(python -c \"import sys,json; paths=json.load\\(sys.stdin\\)['paths']; [print\\(p\\) for p in paths if '/reservations' in p]\")",
+      "Bash(cd /d D:\\\\Hongsun\\\\SmartClassroom)",
+      "Bash(dir /b)"
     ]
   }
 }

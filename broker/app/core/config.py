@@ -40,6 +40,13 @@ class Settings(BaseSettings):
 
     enable_metrics: bool = True
 
+    # 예약 도메인 정책 (T05) — DB 정책 테이블 대신 env로 운영. 변경은 재배포 또는 env 갱신.
+    reservation_slot_minutes: int = 30
+    max_concurrent_reservations: int = 5
+    max_reservation_hours_per_day: int = 8
+    max_reservation_duration_minutes: int = 240
+    reservation_lookahead_days: int = 14
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -1,0 +1,60 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint-type-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: broker
+          POSTGRES_PASSWORD: broker
+          POSTGRES_DB: broker_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U broker"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql+asyncpg://broker:broker@localhost:5432/broker_test
+      APP_ENV: test
+      LOG_LEVEL: WARNING
+      ENABLE_METRICS: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          version: "0.5.x"
+      - name: Set up Python
+        run: uv python install 3.12
+      - name: Install dependencies
+        run: uv sync --extra dev
+      - name: Lint (ruff)
+        run: |
+          uv run ruff check .
+          uv run ruff format --check .
+      - name: Typecheck (mypy)
+        run: uv run mypy broker
+      - name: Apply migrations
+        run: uv run alembic upgrade head
+      - name: Migration drift check
+        run: uv run alembic check
+      - name: Tests
+        run: uv run pytest -v --cov=broker --cov-report=xml --cov-report=term
+      - name: Export OpenAPI
+        run: |
+          uv run python -c "import json; from broker.app.main import create_app; \
+            print(json.dumps(create_app().openapi(), indent=2))" > openapi.json
+      - name: Upload OpenAPI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi
+          path: openapi.json

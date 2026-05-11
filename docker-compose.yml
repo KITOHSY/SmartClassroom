@@ -1,0 +1,41 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: broker
+      POSTGRES_PASSWORD: broker
+      POSTGRES_DB: broker
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U broker -d broker"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  broker:
+    build:
+      context: .
+      dockerfile: broker/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      APP_ENV: development
+      DATABASE_URL: postgresql+asyncpg://broker:broker@postgres:5432/broker
+      LOG_LEVEL: INFO
+      AUTH_PROVIDER: mock
+      SESSION_SECRET: dev-secret
+      SESSION_COOKIE_SECURE: "false"
+      ENABLE_METRICS: "true"
+      EXPOSE_DOCS: "true"
+    ports:
+      - "8000:8000"
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn broker.app.main:app --host 0.0.0.0 --port 8000"
+
+volumes:
+  pgdata:

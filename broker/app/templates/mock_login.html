@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <title>Mock 로그인 (개발용)</title>
+  <style>
+    body { font-family: sans-serif; max-width: 480px; margin: 4rem auto; padding: 0 1rem; }
+    label { display: block; margin: 0.5rem 0 0.2rem; }
+    input, select { width: 100%; padding: 0.4rem; box-sizing: border-box; }
+    button { margin-top: 1rem; padding: 0.5rem 1rem; }
+    .warn { color: #b30; font-size: 0.9em; }
+  </style>
+</head>
+<body>
+  <h1>Mock 로그인</h1>
+  <p class="warn">⚠ 이 화면은 개발/스테이징/테스트 환경 전용입니다. production에서는 차단됩니다.</p>
+  <form method="post" action="/api/v1/auth/mock/callback">
+    <label>학번/외부 ID
+      <input name="external_id" required>
+    </label>
+    <label>이름
+      <input name="display_name" required>
+    </label>
+    <label>이메일 (선택)
+      <input name="email" type="email">
+    </label>
+    <label>역할
+      <select name="role">
+        <option value="user" selected>user</option>
+        <option value="admin">admin</option>
+      </select>
+    </label>
+    <button type="submit">로그인</button>
+  </form>
+</body>
+</html>

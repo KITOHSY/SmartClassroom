@@ -9,15 +9,16 @@
 
 ## 0. 분해 결과 한눈에 보기
 
-- 총 20개 태스크. 카테고리: 백엔드 7 / 프런트엔드 3 / 풀스택 2 / 기타(Host·Client·인증·인프라·운영) 8.
-- PRD Feature 매핑: F1=T01·T04·T16, F2=T08·T13·T14·T17, F3=T07, F4=T09·T12·T15, F5=T06·T11·T17·T18.
-- 크리티컬 패스: T01 → T04 → T05 → T07 → T08 → T14 → T17 (원클릭 접속까지의 최단 경로).
+- 총 21개 태스크. 카테고리: 백엔드 8 / 프런트엔드 3 / 풀스택 2 / 기타(Host·Client·인증·인프라·운영) 8.
+- PRD Feature 매핑: F1=T04a·T16(개발) + T01·T04b(운영 전환), F2=T08·T13·T14·T17, F3=T07, F4=T09·T12·T15, F5=T06·T11·T17·T18.
+- 크리티컬 패스(개발 트랙): **T03 → T04a → T05 → T07 → T08 → T14 → T17** — Mock 인증 위에서 "원클릭 접속(입력 0개)" KPI 달성까지의 최단 경로. 외부 행정 의존 없음.
+- 운영 전환 트랙: **T01 → T04b** — CNU SSO 프로토콜 확정 + Provider 통합. T04a 머지 이후 별도 트랙으로 병행, 운영 출시 전 머지 필수.
 
 ### 0-1. PRD-instruction.md MVP 요구사항 ↔ 태스크
 
 | MVP 요구사항 | 담당 태스크 |
 | --- | --- |
-| 포털 연동 예약 페이지(추가 로그인 불필요) | T01, T04, T16 |
+| 포털 연동 예약 페이지(추가 로그인 불필요) | T04a, T04b, T16 (T04b 머지 전까지 Mock 운영, T01은 행정 트랙으로 병행) |
 | 동적 접속 토큰 발급 | T07 |
 | 세션 관리 및 자동 차단(10분 전 알림 + 강제 종료) | T09, T15 |
 | 호스트 상태 모니터링 대시보드 | T18 |
@@ -41,13 +42,20 @@
 ### T01. 포털 SSO 연동 사양 조사 + PoC
 - 카테고리: 기타 (인증)
 - 의존성: 없음
+- 사전 발견 (2026-05-11): `NetworkLog.md`(portal.cnu.ac.kr → cnuit.cnu.ac.kr SSO 트래픽 캡처) 분석 결과 충남대 SSO는 **Penta Security PMI-SSO2** 자체 프로토콜로 확정. 근거 — URL 파라미터 `pmi-sso2` / `pmi-sso-return2`, SP 식별자 `from=gid_*`, 글로벌 세션 쿠키 `kalogin` 및 `_SSO_Global_Logout_url`(둘 다 `Domain=.cnu.ac.kr`). **표준 SAML/OIDC/CAS 클라이언트 라이브러리로는 연동 불가 — Penta 에이전트 키트(JAR/JSP) 수령 필수.**
 - 완료 조건
-  - [ ] 충남대 정보화본부에 외부 연동 신청 절차 확인 (담당 부서, 필요 서류, 소요 일정)
-  - [ ] portal.cnu.ac.kr / sso.cnu.ac.kr 의 SSO 프로토콜 공식 확인 (자체 토큰 / SAML / OIDC / CAS 중 어느 것인지)
-  - [ ] 토큰/세션 검증용 API 또는 SP 메타데이터 수령
-  - [ ] 임시 검증 환경에서 테스트 계정으로 로그인 → 토큰 → 사용자 식별 정보 획득까지 PoC 성공
+  - [ ] 충남대 정보화본부에 외부 SP 등록 신청 (담당 부서, 필요 서류, 소요 일정 — 통상 2–4주)
+  - [ ] **SP 식별자 수령** — `from=gid_<우리시스템>` 값 + SP 등록 증명
+  - [ ] **PMI-SSO 에이전트 키트 수령** — Penta 클라이언트 라이브러리(JAR/WAR 또는 JSP 에이전트) + 연동 가이드 PDF + PMI-SSO 버전(v1/v2/v3) 확정
+  - [ ] **암호화 자료 수령** — SP 인증서/공개키 또는 PFX, AES 키 등 `pmi-sso2`/`pmi-sso-return2` 암복호화에 필요한 일체
+  - [ ] **REST 검증 API 제공 여부 확인** — 있으면 Python에서 직접 호출 → Java 사이드카 생략 가능. 없으면 사이드카 확정
+  - [ ] **테스트 IdP 접근권** (`devportal.cnu.ac.kr` 등) + 테스트 계정 2종 이상 수령
+  - [ ] **사용자 식별 필드 매핑 명세 수령** — 학번/이름/메일/소속의 키 이름 및 값 포맷(`users.external_id` 매핑 결정 근거)
+  - [ ] **Global Logout 체인 등록 절차 확인** — `_SSO_Global_Logout_url` 쿠키에 우리 logout URL 등록 필요 여부 + 절차
+  - [ ] **SP 도메인 정책 확인** — 우리 도메인이 `.cnu.ac.kr` 하위가 아닐 경우의 동작 차이(쿠키 자동 공유 X, redirect 흐름은 정상)
+  - [ ] **PoC 성공** — Java 사이드카 또는 REST API로 `pmi-sso2` 발급 + 콜백 `pmi-sso-return2` 복호화 → 사용자 식별 정보 획득 1회 통과
   - [ ] R1 위험에 대한 폴백 인증(학내 메일 OAuth 등) 전략 결정
-- 산출물: SSO 연동 사양서, PoC 스크립트, 폴백 결정 문서
+- 산출물: SSO 연동 사양서(PMI-SSO 버전·키트 인벤토리·키 보관 위치), PoC 스크립트(Java 사이드카 또는 REST 직접 호출), 폴백 결정 문서
 
 ### T02. 네트워크 경로 및 방화벽 정책 합의
 - 카테고리: 기타 (인프라)
@@ -55,6 +63,8 @@
 - 완료 조건
   - [ ] 외부 클라이언트 → 학내 호스트(47984/47989/RTSP 21/UDP 47998-48010) 접근 정책 합의
   - [ ] Broker(공인망) → Sunshine 호스트(학내망) 제어 채널 합의
+  - [ ] Broker ↔ `sso.cnu.ac.kr` / `portal.cnu.ac.kr` HTTPS 양방향 합의 — 학교 IdP의 SP 화이트리스트에 우리 callback URL(`returl`) 등록 가능 여부 사전 확인 (T01과 동기화)
+  - [ ] Broker 서비스 도메인 결정 — `.cnu.ac.kr` 하위 vs 외부 도메인. 외부 도메인이면 `kalogin`/`_SSO_Global_Logout_url` 자동 공유 불가, 표준 SP 흐름은 정상 동작
   - [ ] WoL 또는 IPMI 등 원격 전원 제어 가능 여부 확정 (A5 가정 검증)
   - [ ] 방화벽 룰셋 문서화 + 운영팀 서명
 - 산출물: 네트워크 다이어그램, 방화벽 룰셋 문서
@@ -66,29 +76,61 @@
 ### T03. Broker 서비스 골격 + DB 스키마 + 관측성
 - 카테고리: 백엔드
 - 의존성: 없음
+- 상태: **완료 (2026-05-12)** — pytest 9 green, ruff + mypy strict pass
 - 완료 조건
-  - [ ] 언어/프레임워크 결정 (예: Python FastAPI / Node NestJS / Go) 및 레포 초기화
-  - [ ] 핵심 엔티티 스키마: User, Host, Reservation, Session, Token, AuditLog
-  - [ ] 마이그레이션 도구 도입(Alembic/Prisma 등) + CI 워크플로 골격
-  - [ ] OpenAPI(Swagger) 자동 생성 파이프라인
-  - [ ] Healthcheck `/healthz`, `/readyz`
-  - [ ] 구조적 로깅(JSON, request-id 트레이싱) + Prometheus `/metrics` 노출 — 모든 후속 백엔드 태스크의 공통 전제
-- 산출물: 레포 부트스트랩, ER 다이어그램, OpenAPI 초안, 로깅/메트릭 가이드
+  - [x] 언어/프레임워크 결정 (Python 3.12 + FastAPI) 및 레포 초기화 (`broker/`)
+  - [x] 핵심 엔티티 스키마: User, Host, Reservation, Token, AuditLog (Session은 도메인 컨셉 — `tokens.purpose='session'`로 동일 테이블 재사용)
+  - [x] Alembic 도입 (`0001_initial`) + GitHub Actions CI 워크플로(`.github/workflows/ci.yml`) — lint + mypy + pytest
+  - [x] OpenAPI 자동 생성 (`EXPOSE_DOCS=true` 게이트, `/docs`·`/openapi.json`)
+  - [x] Healthcheck `/healthz`, `/readyz` (`readyz`는 DB ping)
+  - [x] 구조적 로깅(structlog JSON + request-id contextvar) + Prometheus `/metrics` 노출 (`ENABLE_METRICS=true`)
+- 산출물: 레포 부트스트랩, Alembic 마이그레이션, OpenAPI 초안, 로깅/메트릭 가이드
 
-### T04. 인증/세션 미들웨어 (SSO 게이트웨이)
+### T04a. AuthProvider 인터페이스 + Mock 구현 + 세션 미들웨어
 - 카테고리: 백엔드
-- 의존성: T01, T03
+- 의존성: T03 (T01과 무관 — 개발 트랙 unblock 목적)
+- 상태: **완료 (2026-05-12)** — pytest 14 green (mock flow 7 + SLO 3 + factory guard 4), ruff + mypy strict pass
+- 세션 방식 결정: **서버사이드 opaque 세션** 채택 (JWT 후보 기각). 이유 — SLO(Portal→우리) 즉시 무효화 요구사항. raw cookie는 `secrets.token_urlsafe(32)`로 발급, DB에는 `sha256(raw)`만 `tokens.purpose='session'`로 저장(덤프 유출 시 세션 재현 불가). T03 `tokens` 테이블 재사용을 위해 마이그레이션 `0002_token_host_nullable` 추가(`host_id` NULL 허용).
+- 미인증 응답 분기: `/api/*` 경로는 Accept 무관 401 JSON(SPA 친화), 그 외 보호 라우트는 Accept `text/html`이면 302 redirect — T16 캘린더 페이지가 이 분기에 의존.
 - 완료 조건
-  - [ ] T01에서 결정된 프로토콜에 맞춰 SSO 콜백/검증 엔드포인트 구현
-  - [ ] Broker 자체 세션 토큰(JWT 또는 서버사이드 세션) 발급
-  - [ ] 인증 데코레이터/가드 작성 — 모든 보호 API 적용
-  - [ ] 미인증 요청은 SSO 인증 흐름으로 redirect (F1 AC)
-  - [ ] 단위 테스트: 유효/만료/위조 토큰 시나리오
-- 산출물: 인증 모듈, 통합 테스트, 시퀀스 다이어그램
+  - [x] `AuthProvider` 인터페이스 정의 (메서드: `initiate_login()`, `verify_callback()`, `fetch_user_identity(token)`) — `broker/app/core/auth.py`
+  - [x] `MockAuthProvider` 구현 — Jinja2 폼(`/api/v1/auth/mock/login`) + JSON/form 양쪽 callback. 부팅 가드: `APP_ENV=production` + `AUTH_PROVIDER=mock` → `RuntimeError`
+  - [x] Broker 자체 세션 토큰 — 서버사이드 opaque 세션(`broker_session` 쿠키, HttpOnly+SameSite=Lax, TTL 8h)
+  - [x] 인증 데코레이터/가드 — `get_current_user` / `get_optional_user` / `require_admin` (`broker/app/api/deps.py`)
+  - [x] 미인증 요청 처리 — `UnauthenticatedError` → Accept 분기 핸들러(`/api/*`은 401 JSON, 외부는 302). Provider의 `initiate_login()` 결과를 `login_url`로 전달
+  - [x] 단위 테스트 — 유효/만료/회수/위조 4종 + Accept 분기 + production 가드 3종 회귀
+  - [x] 감사 로그 훅 — `login_success` / `logout` / (`logout_no_session`) 이벤트, `auth_provider` 식별자 모든 레코드 기록
+  - [x] SLO 헬퍼 `revoke_all_sessions_for_user(user_id)` — `broker/app/core/auth_session.py`. T04b의 PMI Global Logout 수신 엔드포인트에서만 호출. audit `slo_triggered` 이벤트 슬롯 예약(T04b 본구현 시 발화)
+  - [x] 추가 production 부팅 가드 — ① mock provider 차단, ② `SESSION_SECRET` 약한 값 차단, ③ `SESSION_COOKIE_SECURE=true` 강제 (3종 모두 lifespan에서 `RuntimeError`)
+- 산출물: 인증 코어 모듈(`auth.py`/`auth_session.py`/`auth_responses.py`), MockProvider, Jinja 템플릿, AuthSessionMiddleware, 통합 테스트 14건, 개발자 가이드(`docs/auth.md`)
+
+### T04b. CNU SSO Provider 통합 (PMI-SSO2)
+- 카테고리: 백엔드
+- 의존성: T04a, T01
+- 전제: T01에서 식별된 **Penta Security PMI-SSO2** — 표준 라이브러리 연동 불가. Penta 에이전트 키트(JAR) + Java 사이드카(`pmi-sso-bridge`) 사용을 기본 전제로 함. T01에서 REST 검증 API 제공이 확인되면 사이드카는 생략 가능.
+- 완료 조건
+  - [ ] **`pmi-sso-bridge` 사이드카 서비스 구현** — Spring Boot 컨테이너에 Penta JAR 적재. 2개 엔드포인트만 외부 비노출 내부망에 제공:
+    - `POST /pmi/encode-request` → `pmi-sso2` 토큰 + `sinfo` 발급 (SP→IdP 방향)
+    - `POST /pmi/decode-callback` → `pmi-sso-return2` 복호화 → user identity JSON (IdP→SP 방향)
+    - healthcheck `/healthz` + 구조적 로깅(JSON, request_id 전달) + Prometheus `/metrics`
+  - [ ] **`CnuSsoProvider` 구현** — `AuthProvider` 인터페이스 준수, 내부에서 사이드카 HTTP 호출
+    - `initiate_login()`: 사이드카 `encode-request` → `https://sso.cnu.ac.kr/sso/pmi-sso2.jsp?pmi-sso2=...&returl=<broker callback>&from=<SP ID>`로 302
+    - `verify_callback()`: 콜백 쿼리 `pmi-sso-return2`를 사이드카 `decode-callback`에 전달 → user identity 획득
+    - `fetch_user_identity()`: T01 매핑 명세에 따라 `(provider='cnu_sso', external_id=<학번>, display_name, email)`로 정규화
+  - [ ] **사이드카 인프라**: docker-compose에 `pmi-sso-bridge` 서비스 추가, Broker → bridge는 컴포즈 내부망 통신, 외부 비노출, healthcheck 포함
+  - [ ] **Penta JAR 라이센스/배포** 관리 절차 문서화 — 재배포 범위, 키/인증서 회전 절차, 비밀값(.env) 비커밋
+  - [ ] **콜백 라우트** `/auth/cnu-sso/callback` 구현 — `pmi-sso-return2` 수신 + 사이드카 호출 + `users` upsert + Broker 세션 쿠키 발급
+  - [ ] **Provider 선택 설정** (`AUTH_PROVIDER=cnu_sso|mock`) 운영 환경 강제값 — T03 부팅 가드(production + mock 차단) 위에 사이드카 헬스체크 게이트 추가
+  - [ ] **Global Logout 체인 연동** — `_SSO_Global_Logout_url` 쿠키 정책 준수, 우리 logout URL 학교 등록(T01 절차 결과 반영)
+  - [ ] **사용자 upsert 정책** — `users(provider='cnu_sso', external_id=<학번>)` UNIQUE 활용. 우리 도메인이 `.cnu.ac.kr` 외부면 자동 SSO 영향 평가 및 UX 노트
+  - [ ] **폴백 인증** 채택 시 `CnuMailOauthProvider`도 동일 `AuthProvider` 인터페이스로 추가 — T01 폴백 결정 결과 따름
+  - [ ] **통합 테스트**: 테스트 IdP(devportal.cnu.ac.kr)에서 발급 → 복호화 → 사용자 식별 → Broker 세션 발급까지 e2e 1회. 만료 토큰/위조/키 불일치 회귀 케이스 포함
+  - [ ] **운영 전환 체크리스트**: Mock → CNU SSO 스위치, 사이드카 기동 확인, 감사 로그 연속성 검증, Provider 식별자(`auth_provider=cnu_sso`)가 모든 로그에 기록됨
+- 산출물: `pmi-sso-bridge` Spring Boot 프로젝트 + 컨테이너 이미지, CnuSsoProvider 패치, docker-compose 업데이트, 운영 전환 런북(PMI-SSO 키 회전 절차 포함)
 
 ### T05. 예약 도메인 API
 - 카테고리: 백엔드
-- 의존성: T03, T04
+- 의존성: T03, T04a
 - 완료 조건
   - [ ] CRUD: `POST/GET/DELETE /reservations`, `GET /reservations?from=&to=&hostId=`
   - [ ] 슬롯 충돌 검증 (동일 호스트·시간 윈도우 중복 불가)
@@ -110,7 +152,7 @@
 
 ### T07. 동적 접속 토큰 발급/검증
 - 카테고리: 백엔드
-- 의존성: T04, T05
+- 의존성: T04a, T05
 - 완료 조건
   - [ ] 토큰 = (사용자, 호스트, 시간 윈도우) 바인딩 (F3 AC)
   - [ ] `POST /reservations/{id}/connect` → 일회성 접속 토큰 발급
@@ -229,7 +271,7 @@
 
 ### T16. SSO 진입 + 캘린더 / 예약 UI
 - 카테고리: 프런트엔드
-- 의존성: T04, T05
+- 의존성: T04a, T05 (Provider 추상화 위에서 동작 — 실제 SSO redirect는 T04b 머지 시 자동 활성)
 - 완료 조건
   - [ ] 프레임워크 결정(예: Next.js / Vue3 + Vite) + 디자인 토큰
   - [ ] 미인증 진입 시 SSO redirect (F1 AC)
@@ -265,13 +307,15 @@
 
 ### T20. 배포·인스톨러·문서
 - 카테고리: 기타 (운영)
-- 의존성: T10, T13
+- 의존성: T10, T13, T04b
 - 완료 조건
   - [ ] Sunshine 패치 빌드 → 강의실 PC 자동 배포 채널 (MSI + 그룹정책 또는 자체 에이전트)
   - [ ] Moonlight 인스톨러(Win/macOS/Linux) — moonlight:// 핸들러 자동 등록 포함
+  - [ ] Broker + `pmi-sso-bridge` 사이드카 컨테이너 배포 파이프라인 — 이미지 빌드, healthcheck, 롤백 절차, Penta JAR 라이센스/키 회전 매뉴얼 포함
+  - [ ] Provider 스위치 런북 — `AUTH_PROVIDER=mock|cnu_sso` 전환 + 사이드카 기동 검증 + 감사 로그 연속성 점검 체크리스트
   - [ ] 사용자 가이드 (자택 PC 최초 설치 / 접속 흐름)
   - [ ] 운영자 런북 (호스트 추가, 장애 대응, 폴백 절차)
-- 산출물: 인스톨러 3종, 가이드 문서
+- 산출물: 인스톨러 3종, 사이드카 배포 매니페스트, 가이드 문서
 
 ---
 
@@ -282,7 +326,8 @@ flowchart LR
     T01[T01 SSO PoC]:::ext
     T02[T02 방화벽 합의]:::ext
     T03[T03 Broker 골격+DB+관측성]:::be
-    T04[T04 SSO 게이트웨이]:::be
+    T04a[T04a AuthProvider+Mock+세션]:::be
+    T04b[T04b CNU SSO Provider]:::be
     T05[T05 예약 API]:::be
     T06[T06 가용 PC API]:::be
     T07[T07 동적 토큰]:::be
@@ -300,8 +345,9 @@ flowchart LR
     T19[T19 수동 PIN 폴백]:::full
     T20[T20 배포/인스톨러]:::ext
 
-    T01 --> T04
-    T03 --> T04 --> T05 --> T07 --> T08
+    T03 --> T04a --> T05 --> T07 --> T08
+    T04a --> T04b
+    T01 --> T04b
     T03 --> T06
     T11 --> T06
     T08 --> T14
@@ -312,7 +358,7 @@ flowchart LR
     T08 --> T19
     T17 --> T19
     T09 -. trigger .-> T12
-    T04 --> T16
+    T04a --> T16
     T05 --> T16
     T06 --> T17
     T07 --> T17
@@ -329,16 +375,18 @@ flowchart LR
     classDef ext fill:#eceff1,stroke:#455a64
 ```
 
-크리티컬 패스: **T01 → T04 → T05 → T07 → T08 → T14 → T17** — "원클릭 접속(입력 0개)" KPI 달성까지의 최단 경로.
+크리티컬 패스(개발 트랙): **T03 → T04a → T05 → T07 → T08 → T14 → T17** — Mock 인증 위에서 "원클릭 접속(입력 0개)" KPI 달성까지의 최단 경로. 외부 행정 의존 없음.
+
+운영 전환 트랙: **T01 → T04b** (T04a 머지 후 별도 트랙으로 병행). 운영 출시 전 T04b 머지 + Provider 스위치 필수.
 
 ---
 
 ## 9. 마일스톤 제안 (참고)
 
-- **M1 (인증·뼈대)**: T01·T02·T03·T04·T16 — F1 부분 동작 확인.
-- **M2 (예약·집계)**: T05·T11·T06·T17 — 예약 + 가용 PC 노출.
+- **M1 (인증 뼈대 + Mock)**: T03·T04a·T16 — Mock 인증 위에서 F1 단독 동작. T01·T02는 행정 트랙으로 병행 시작.
+- **M2 (예약·집계)**: T05·T11·T06·T17 — 예약 + 가용 PC 노출 (T04a 위에서 작동).
 - **M3 (자동 접속)**: T10·T13·T07·T08·T14·T15·T19·T12 — F2/F3/F4 완성.
-- **M4 (운영)**: T18·T09 강화·T20 — F5 + 정식 배포.
+- **M4 (운영 전환)**: T04b·T01·T02·T18·T09 강화·T20 (+ `pmi-sso-bridge` 사이드카 배포) — CNU SSO swap-in을 운영 컷오버 마일스톤으로 명시. F5 + 정식 배포.
 
 ---
 
@@ -353,7 +401,10 @@ flowchart LR
 
 ## 11. 미해결 가정 / 후속 이슈
 
-- **A1 (SSO 승인)**: T01 결과에 따라 일정 영향. 폴백 인증 채택 시 T04 이중 구현 비용 검토.
+- **A1 (SSO 승인)**: T04a/MockAuthProvider 도입으로 개발 트랙 unblock 완료(2026-05-12 머지). T04b 머지 전까지 운영 출시 불가.
+- **A1″ (세션 방식 결정, 2026-05-12)**: 서버사이드 opaque 세션 채택(JWT 기각). 이유 — SLO 즉시 무효화. T04b의 PMI Global Logout 수신 엔드포인트는 `revoke_all_sessions_for_user`만 호출. JWT 재논의 시 SLO 대안(짧은 TTL + denylist) 필요.
+- **A1′ (PMI-SSO2 확인, 2026-05-11)**: `NetworkLog.md` 분석 결과 충남대 SSO는 **Penta Security PMI-SSO2** 자체 프로토콜로 확정. 표준 SAML/OIDC/CAS 라이브러리 연동 불가 — Penta 에이전트 키트(JAR) 수령 + **Java 사이드카(`pmi-sso-bridge`) 도입 필수**. T04b 작업량 약 2–3배 증가 추정. T01에서 학교가 REST 검증 API를 제공하는 경우에 한해 사이드카 생략 가능. T04b 의존성 추가(T20).
+- **Mock-first 운영 가드**: `APP_ENV=production`일 때 `MockAuthProvider` 활성화 차단을 CI/CD 및 부팅 시 강제. 감사 로그에 활성 Provider 식별자 기록 — T20 운영 런북에 Provider 스위치 절차 포함.
 - **A4/A5 (네트워크/원격 전원)**: T02 결과 기반. WoL 불가 시 T11 상시 가동 PC 가정으로 후퇴.
 - **알림 채널 2차안**: T15 1차는 Moonlight 토스트로 확정. Sunshine OSD 패치는 별도 이슈로 분리.
 - **fork 유지보수**: Sunshine/moonlight-qt 업스트림 추적 주기·담당자 미정 — T20 운영 런북에 포함 필요.

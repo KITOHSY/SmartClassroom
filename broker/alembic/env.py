@@ -1,0 +1,63 @@
+"""Alembic environment — async 모드.
+
+EXP §16.2: alembic init -t async 템플릿 패턴.
+"""
+
+import asyncio
+from logging.config import fileConfig
+
+# 모든 모델을 import해서 Base.metadata에 등록 (autogenerate 대상).
+import broker.app.domain  # noqa: F401
+from broker.app.core.config import get_settings
+from broker.app.infra.db import Base
+from sqlalchemy.engine import Connection
+from sqlalchemy.ext.asyncio import async_engine_from_config
+
+from alembic import context
+
+config = context.config
+
+if config.config_file_name is not None:
+    fileConfig(config.config_file_name)
+
+# 환경변수에서 URL 주입 (alembic.ini의 sqlalchemy.url은 비워둠).
+settings = get_settings()
+config.set_main_option("sqlalchemy.url", settings.database_url)
+
+target_metadata = Base.metadata
+
+
+def do_run_migrations(connection: Connection) -> None:
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        compare_type=True,
+        compare_server_default=True,
+    )
+    with context.begin_transaction():
+        context.run_migrations()
+
+
+async def run_async_migrations() -> None:
+    connectable = async_engine_from_config(
+        config.get_section(config.config_ini_section, {}),
+        prefix="sqlalchemy.",
+        future=True,
+    )
+    async with connectable.connect() as connection:
+        await connection.run_sync(do_run_migrations)
+    await connectable.dispose()
+
+
+def run_migrations_offline() -> None:
+    raise RuntimeError("offline 모드는 지원하지 않습니다. 항상 DB 연결 가능한 환경에서 실행하세요.")
+
+
+def run_migrations_online() -> None:
+    asyncio.run(run_async_migrations())
+
+
+if context.is_offline_mode():
+    run_migrations_offline()
+else:
+    run_migrations_online()

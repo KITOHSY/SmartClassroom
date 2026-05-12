@@ -15,7 +15,9 @@
       "Bash(curl -s http://localhost:8000/openapi.json)",
       "Bash(python -c \"import sys,json; paths=json.load\\(sys.stdin\\)['paths']; [print\\(p\\) for p in paths if '/reservations' in p]\")",
       "Bash(cd /d D:\\\\Hongsun\\\\SmartClassroom)",
-      "Bash(dir /b)"
+      "Bash(dir /b)",
+      "Bash(uv run *)",
+      "Bash(git stash *)"
     ]
   }
 }

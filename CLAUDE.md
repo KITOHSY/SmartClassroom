@@ -74,7 +74,7 @@ broker/tests/        # pytest + pytest-asyncio + testcontainers + asgi-lifespan
 
 ### 도메인 예외 → HTTP 핸들러 패턴
 
-서비스는 순수 Python 예외를 raise한다. `core/errors.py`의 `ReservationConflictError` / `ReservationQuotaError` / `InvalidReservationWindowError`, `services/reservation.py`의 `NotOwnerError` / `ReservationNotFoundError` / `HostNotFoundError`. `register_error_handlers`가 앞쪽 3종을 409/429/422로 **전역 매핑**한다. `NotOwnerError` / `ReservationNotFoundError`는 라우터에서 **404로 변환**한다 — 존재 노출 방지가 목적이므로 403 금지.
+서비스는 순수 Python 예외를 raise한다. `core/errors.py`의 `ReservationConflictError` / `ReservationQuotaError` / `InvalidReservationWindowError` / `InvalidConnectWindowError`, `services/reservation.py`의 `NotOwnerError` / `ReservationNotFoundError` / `HostNotFoundError`. `register_error_handlers`가 앞쪽 4종을 409/429/422/422로 **전역 매핑**한다. `NotOwnerError` / `ReservationNotFoundError`는 라우터에서 **404로 변환**한다 — 존재 노출 방지가 목적이므로 403 금지.
 
 새 도메인 예외 추가 시 같은 분리 원칙: 매핑이 보편적이면 전역 핸들러, 라우트별 의미라면 라우터에서 변환.
 
@@ -93,12 +93,32 @@ broker/tests/        # pytest + pytest-asyncio + testcontainers + asgi-lifespan
 
 `audit.write_audit()`도 호출자가 `request_id`를 명시하지 않으면 같은 contextvars에서 픽업 — 같은 결합.
 
-### 세션 = 서버사이드 opaque (sha256 저장)
+### `tokens` 테이블은 다중 purpose의 서버사이드 opaque
 
-쿠키 값은 `secrets.token_urlsafe(32)` (raw는 클라이언트로만 전달). DB에는 `sha256(raw)`만 기존 `tokens` 테이블에 `purpose='session'`으로 저장한다. `core/auth_session.py` 참조. 함의:
-- DB 덤프로 활성 세션 재현 불가.
-- `revoke_all_sessions_for_user()`가 SLO 백본 — "전체 로그아웃" 흐름은 모두 이 헬퍼만 호출하도록 격리.
-- 세션의 경우 `tokens.host_id`는 NULL (`0002_token_host_nullable` 마이그레이션).
+raw 토큰은 `secrets.token_urlsafe(32)` 로 만들고 **응답에만** 노출, DB에는 `sha256(raw)` 64자 hex만 `jti` 컬럼에 저장한다. JWT 아님 — 서버가 항상 진실. `purpose` 컬럼으로 종류 구분:
+
+| purpose | 발급자 | host_id | reservation_id | expires_at | consumed_at | 회수 헬퍼 |
+| --- | --- | --- | --- | --- | --- | --- |
+| `session` | `core/auth_session.py` | NULL | NULL | now + session_ttl | 미사용 | `revoke_all_sessions_for_user()` |
+| `connect` | `services/token_service.py` (T07) | 예약 호스트 | 예약 id | `reservation.ends_at` | 1회 소비 | `revoke_active_tokens_for_reservation()` |
+
+함의:
+- DB 덤프로 활성 토큰 재현 불가 (raw가 어디에도 없다).
+- `tokens.host_id`는 nullable (`0002_token_host_nullable`) — session 때문. connect는 항상 채움.
+- `ix_tokens_active_expires` 부분 인덱스(`consumed_at IS NULL AND revoked_at IS NULL`)가 활성 토큰 조회의 인덱스 — 새 purpose도 이 predicate를 따른다.
+- 새 purpose 추가 시 위 표 한 줄 + `CONNECT_PURPOSE` 같은 모듈 상수 + 회수 헬퍼 격리. 라우터에서 토큰 lifecycle 직접 만지지 말 것.
+
+### 1회 소비 / 동시성은 DB UPDATE의 predicate로
+
+`token_service.mark_consumed()`는 `UPDATE tokens SET consumed_at=now WHERE id=:id AND consumed_at IS NULL AND revoked_at IS NULL` 의 `rowcount==1` 만 "이번 호출이 소비" 로 인정한다. Python 측 `if token.consumed_at is None: token.consumed_at = now`는 **레이스가 난다** — 금지. 같은 철학이 `reservations`의 EXCLUDE GIST(서비스가 IntegrityError 잡음)에 이미 있다.
+
+새로운 멱등/race-safe 동작이 필요하면 같은 패턴: predicate UPDATE → rowcount 검사 → audit. ORM `flush()` 후 객체 비교로 분기하지 말 것.
+
+### 내부 호출 API는 require_admin 임시 가드 (T08까지)
+
+T07 `POST /tokens/verify`처럼 **외부 사용자가 아닌 내부 컴포넌트**(T08 자동 페어링, T10 Sunshine fork 등)가 호출하는 엔드포인트는 현재 `Depends(require_admin)` 로 임시 보호하고 라우터 docstring에 `TODO(T08): internal auth 교체 (§11 A6)` 마커를 붙인다. T08에서 X-Internal-Token / mTLS 로 일괄 교체할 때 이 마커로 찾는다. 새 내부 API도 같은 마커 + 같은 임시 가드 패턴.
+
+검증 응답 정책: **200 + `valid: bool`** 모델 — `HTTPException` 으로 4xx/5xx 분기하지 않는다. 호출자(T10 Sunshine fork 등)가 단순 JSON 파싱 + `valid` 플래그로 분기할 수 있게 하기 위함. 4xx는 admin/internal-auth 자체 실패에만.
 
 ### 운영 가드는 lifespan에서
 
@@ -116,9 +136,14 @@ broker/tests/        # pytest + pytest-asyncio + testcontainers + asgi-lifespan
 
 `services/*` 와 `auth_session.*` 는 `db.add()` / `db.execute()` / `db.flush()`만 쓴다. 라우터(또는 `auth.py` 콜백)가 `db.commit()` 한다. 멀티스텝 작업(세션 발급 + audit 기록 등)의 원자성 유지가 목적. 서비스 함수 안에 commit을 흩어 두지 말 것.
 
-### Quota는 env 기반 (정책 테이블 없음)
+### 정책 상수는 env 기반 (정책 테이블 없음)
 
-`core/config.py`의 `Settings.reservation_*` 5종 (slot_minutes, max_concurrent, max_hours_per_day, max_duration_minutes, lookahead_days)이 정책 자체다. 변경 = 재배포/재시작. 정책 테이블이 필요해지면 별도 태스크로 의식적으로 도입, 지나가다 만들지 말 것.
+`core/config.py`의 `Settings`가 정책 자체다. 변경 = 재배포/재시작.
+
+- 예약: `reservation_*` 5종 (slot_minutes, max_concurrent, max_hours_per_day, max_duration_minutes, lookahead_days).
+- 토큰: `connect_token_grace_seconds` (T07 — `starts_at - grace ~ ends_at` 발급 게이트).
+
+정책 테이블이 필요해지면 별도 태스크로 의식적으로 도입, 지나가다 만들지 말 것. 새 env 추가 시 `tests/conftest.py::_set_test_env` 에 testcontainer 기본값을 같이 넣을 것 (테스트가 `Settings(...)` 로 우회하지 못하도록).
 
 ### Auth provider는 Protocol + factory
 

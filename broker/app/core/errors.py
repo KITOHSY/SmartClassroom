@@ -43,6 +43,15 @@ class InvalidReservationWindowError(Exception):
         self.detail = detail or {}
 
 
+class InvalidConnectWindowError(Exception):
+    """T07 접속 토큰 발급 게이트 위반 — too_early / expired_window / reservation_not_active."""
+
+    def __init__(self, message: str, *, detail: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.message = message
+        self.detail = detail or {}
+
+
 def _request_id(request: Request) -> str | None:
     return request.headers.get("X-Request-ID")
 
@@ -116,6 +125,20 @@ def register_error_handlers(app: FastAPI) -> None:
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             content=ErrorResponse(
                 error="invalid_reservation_window",
+                message=exc.message,
+                request_id=_request_id(request),
+                detail=exc.detail or None,
+            ).model_dump(),
+        )
+
+    @app.exception_handler(InvalidConnectWindowError)
+    async def _invalid_connect_window(
+        request: Request, exc: InvalidConnectWindowError
+    ) -> ORJSONResponse:
+        return ORJSONResponse(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            content=ErrorResponse(
+                error="invalid_connect_window",
                 message=exc.message,
                 request_id=_request_id(request),
                 detail=exc.detail or None,

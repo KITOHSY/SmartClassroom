@@ -37,6 +37,9 @@ def _set_test_env() -> None:
     os.environ.setdefault("ENABLE_METRICS", "true")
     # 테스트는 http://test 위에서 동작하므로 secure cookie를 끄지 않으면 cookie jar에 적용 안 됨.
     os.environ.setdefault("SESSION_COOKIE_SECURE", "false")
+    # T07 — 짧은 미래(now+5분)에 시드한 예약으로 발급 통과시키기 위해 grace 1시간으로 확대.
+    # 시계 mock(freezegun) 의존성 회피.
+    os.environ.setdefault("CONNECT_TOKEN_GRACE_SECONDS", "3600")
 
 
 @pytest_asyncio.fixture

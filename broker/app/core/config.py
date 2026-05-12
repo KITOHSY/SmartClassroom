@@ -47,6 +47,10 @@ class Settings(BaseSettings):
     max_reservation_duration_minutes: int = 240
     reservation_lookahead_days: int = 14
 
+    # 동적 접속 토큰 정책 (T07) — 발급 게이트의 starts_at 이전 grace.
+    # `starts_at - grace ~ ends_at` 윈도우에서 발급 가능. 변경은 재배포 또는 env 갱신.
+    connect_token_grace_seconds: int = 60
+
 
 @lru_cache
 def get_settings() -> Settings:

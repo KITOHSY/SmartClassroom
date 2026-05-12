@@ -17,7 +17,9 @@
       "Bash(cd /d D:\\\\Hongsun\\\\SmartClassroom)",
       "Bash(dir /b)",
       "Bash(uv run *)",
-      "Bash(git stash *)"
+      "Bash(git stash *)",
+      "Bash(Get-ChildItem -Force)",
+      "Bash(Select-Object Name)"
     ]
   }
 }

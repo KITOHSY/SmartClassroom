@@ -25,7 +25,9 @@ class Settings(BaseSettings):
     db_max_overflow: int = 5
     db_pool_pre_ping: bool = True
 
-    cors_origins: list[str] = Field(default_factory=lambda: ["http://localhost:3000"])
+    cors_origins: list[str] = Field(
+        default_factory=lambda: ["http://localhost:3000", "http://localhost:5173"]
+    )
     expose_docs: bool = True
 
     auth_provider: Literal["mock", "cnu_sso", "cnu_mail_oauth"] = "mock"

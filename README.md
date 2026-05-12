@@ -40,6 +40,16 @@ docker compose up postgres -d
 uv run pytest -v
 ```
 
+### Frontend (T16)
+
+```cmd
+cd frontend
+pnpm install
+pnpm dev
+```
+
+Vite는 5173 포트, `/api/*`는 `http://localhost:8000` (broker)으로 프록시. 백엔드 동시 기동 후 `http://localhost:5173/`. 자세한 내용은 [`frontend/README.md`](./frontend/README.md).
+
 ---
 
 ## Stack
@@ -48,7 +58,8 @@ uv run pytest -v
 - PostgreSQL 16 (`btree_gist`, `pgcrypto` 확장 사용)
 - structlog (JSON 로깅) + prometheus-fastapi-instrumentator (메트릭)
 - Docker + docker-compose + GitHub Actions
-- 패키지 매니저: `uv`
+- 패키지 매니저: 백엔드 `uv`, 프런트 `pnpm` (Node 20)
+- 프런트(T16): React 18 + Vite + TypeScript strict + TanStack Query + Tailwind
 
 ---
 
@@ -83,7 +94,23 @@ broker/
 └── Dockerfile                   # 멀티스테이지 (uv builder + slim runtime)
 ```
 
-`broker/`로 한 번 더 감싸는 이유: 향후 `frontend/`, `agent/`(T11 호스트 에이전트), `client-patches/`(T13/T14 Moonlight fork)가 형제로 들어올 모노레포 가정.
+`broker/`로 한 번 더 감싸는 이유: `frontend/`(T16, 아래 참조), `agent/`(T11 호스트 에이전트), `client-patches/`(T13/T14 Moonlight fork)가 형제로 들어올 모노레포 가정.
+
+```
+frontend/                           # T16 React+Vite+TS 프런트엔드
+├── src/
+│   ├── api/                        # axios + 백엔드 contract 매핑
+│   ├── components/                 # CalendarGrid, ReservationModal, RequireAuth, Layout, Toast
+│   ├── hooks/                      # useRovingTabIndex, useFocusTrap
+│   ├── lib/                        # auth, errors, time(KST), queryClient
+│   ├── pages/                      # LoginPage, CalendarPage, MyReservationsPage
+│   ├── routes/                     # React Router v6 정의
+│   ├── styles/                     # Tailwind index.css
+│   └── test/                       # Vitest setup + MSW handlers
+├── package.json (pnpm 9, Node 20)
+├── vite.config.ts (5173, /api 프록시)
+└── tsconfig.json (strict, exactOptionalPropertyTypes)
+```
 
 ---
 

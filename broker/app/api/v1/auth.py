@@ -166,6 +166,7 @@ async def logout(
 @router.get("/me")
 async def me(user: User = Depends(get_current_user)) -> dict[str, object]:
     return {
+        "id": user.id,
         "external_id": user.external_id,
         "display_name": user.display_name,
         "email": user.email,

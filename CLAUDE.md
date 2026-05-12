@@ -6,13 +6,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 SmartClassroom은 충남대 강의실 PC 원격 접속 플랫폼의 Broker 백엔드다 (Sunshine 호스트 + Moonlight 클라이언트 + Broker 오케스트레이터). 제품 정의는 `PRD.md`, 실행 계획과 태스크별 상태는 `EXP.md`에 있으며 둘 다 작업 범위를 잡을 때의 근거다. 코드·커밋 메시지 곳곳에서 `T03`, `T04a`, `T05` 같은 태스크 ID를 인용하므로 논의 단위로 그대로 사용한다.
 
-레포는 향후 모노레포로 확장 예정이다. 현재는 `broker/` 하나뿐이지만 `frontend/`, `agent/` (T11 호스트 에이전트), `client-patches/` (T13/T14 Moonlight fork)가 형제로 들어올 자리를 가정하고 구조가 짜여 있다. `broker/`가 루트라는 전제로 파일을 위로 끌어올리지 말 것.
+레포는 모노레포다. `broker/` (FastAPI 백엔드) + `frontend/` (T16 React+Vite+TS 프런트엔드). 향후 `agent/` (T11 호스트 에이전트), `client-patches/` (T13/T14 Moonlight fork)가 형제로 합류한다. `broker/` / `frontend/` 가 각자 루트라는 전제로 파일을 위로 끌어올리지 말 것.
 
 ## 자주 쓰는 명령어
 
-패키지 매니저는 **uv** — Dockerfile과 CI가 이를 전제로 한다. 아래는 모두 `uv run …`으로 실행.
+백엔드 패키지 매니저는 **uv**, 프런트는 **pnpm 9 / Node 20**. Dockerfile·CI가 이를 전제로 한다.
 
 ```bash
+# 백엔드 — 모두 uv run …
 uv sync --extra dev                                   # 의존성 + dev 도구 설치
 
 # 테스트 (testcontainers가 Postgres를 자동 기동 — Docker 데몬 실행 필수)
@@ -37,6 +38,17 @@ uv run uvicorn broker.app.main:app --reload
 # 통합 스택 (컨테이너 진입 시 alembic upgrade 자동 실행)
 docker compose up --build
 docker compose up postgres -d                         # pytest용 Postgres만 띄울 때
+```
+
+```cmd
+:: 프런트 (T16) — frontend/ 안에서 실행
+cd frontend
+pnpm install
+pnpm dev          :: Vite 5173 + /api 프록시 → localhost:8000
+pnpm test         :: Vitest + RTL + MSW (script가 이미 `vitest run` — `--run` 붙이면 unknown option)
+pnpm lint
+pnpm typecheck    :: tsc strict, exactOptionalPropertyTypes
+pnpm build        :: tsc --noEmit + vite build
 ```
 
 ## 셸 규칙
@@ -148,6 +160,13 @@ T07 `POST /tokens/verify`처럼 **외부 사용자가 아닌 내부 컴포넌트
 ### Auth provider는 Protocol + factory
 
 `core/auth.AuthProvider`가 계약, `providers/__init__.get_active_provider(settings)`가 `settings.auth_provider` 기반 `lru_cache` 팩토리. provider 추가 절차: `providers/` 하위에 Protocol 구현 → `_build_provider`에 이름 등록 → `Settings.auth_provider`의 `Literal`에 값 추가 → `api/v1/auth.py`에 라우트 추가. 라우터에서 구체 provider를 직접 import하지 말 것.
+
+### Frontend ↔ Backend 계약 (T16)
+
+`frontend/` (React+Vite+TS)와 broker 라우터가 결합되는 invariant — 어느 한 쪽만 봐서는 안 보이고, 둘 다 같이 고쳐야 한다:
+
+- **`GET /api/v1/auth/me` 응답에 내부 PK `id`** (`api/v1/auth.py::me`) — 프런트가 admin "내 예약" 화면에서 `?user_id=me.id`로 본인 예약만 필터하기 위함 (`frontend/src/pages/MyReservationsPage.tsx`). 빠지면 admin이 전체 사용자의 예약을 보는 노출 버그 (2026-05-12 e2e 발견). 회귀 assert는 `broker/tests/test_auth_mock_flow.py`. 내부 PK 노출이지만 본인 ID 한정이라 보안 영향 미미.
+- **캘린더 시간 범위는 반열림 `[from, to)` + 30분 그리드** — 백엔드 `_ensure_grid` (`services/reservation.py`)는 `:00`/`:30`만 허용해 `23:59:59`는 422. 프런트 `kstEndOfDay` (`frontend/src/lib/time.ts`)가 다음날 00:00 KST를 반환해 같은 날 마지막 23:30 슬롯을 포함하면서 422를 회피한다. 새 range 입력을 추가할 때도 시계열 helper에서 그리드 정렬을 보장하고 라우트가 `_ensure_grid`로 한 번 더 방어하는 이중 패턴을 유지할 것.
 
 ### 테스트는 testcontainers에 의존
 

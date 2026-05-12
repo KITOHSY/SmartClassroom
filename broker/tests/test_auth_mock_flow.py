@@ -27,7 +27,10 @@ async def test_mock_login_then_me_then_logout(client: AsyncClient) -> None:
 
     r2 = await client.get("/api/v1/auth/me")
     assert r2.status_code == 200
-    assert r2.json()["display_name"] == "Flow User"
+    me_body = r2.json()
+    assert me_body["display_name"] == "Flow User"
+    # 내부 PK 노출 — 프런트가 "내 예약" 필터(`?user_id=`)에 사용.
+    assert isinstance(me_body["id"], int) and me_body["id"] > 0
 
     r3 = await client.post("/api/v1/auth/logout")
     assert r3.status_code == 200

@@ -50,6 +50,16 @@ pnpm dev
 
 Vite는 5173 포트, `/api/*`는 `http://localhost:8000` (broker)으로 프록시. 백엔드 동시 기동 후 `http://localhost:5173/`. 자세한 내용은 [`frontend/README.md`](./frontend/README.md).
 
+### Agent (T11)
+
+```cmd
+cd agent
+uv sync --extra dev
+uv run python -m smartclassroom_agent doctor --config agent.yaml
+```
+
+강의실 PC에 설치하는 사이드카. `agent.yaml`에 `broker_url`/`host_id`/`agent_token`(admin이 `POST /api/v1/hosts`로 받은 raw 토큰) 주입 후 `run` 명령으로 30s 주기 heartbeat. 자세한 내용은 [`agent/README.md`](./agent/README.md).
+
 ---
 
 ## Stack
@@ -94,7 +104,18 @@ broker/
 └── Dockerfile                   # 멀티스테이지 (uv builder + slim runtime)
 ```
 
-`broker/`로 한 번 더 감싸는 이유: `frontend/`(T16, 아래 참조), `agent/`(T11 호스트 에이전트), `client-patches/`(T13/T14 Moonlight fork)가 형제로 들어올 모노레포 가정.
+`broker/`로 한 번 더 감싸는 이유: `frontend/`(T16, 아래 참조)와 `agent/`(T11, 아래 참조)가 형제로 들어와 있고, 향후 `client-patches/`(T13/T14 Moonlight fork)가 합류할 모노레포 가정.
+
+```
+agent/                              # T11 호스트 에이전트 (Python + uv, 자체 루트)
+├── smartclassroom_agent/
+│   ├── cli.py                      # typer (run / doctor / install-service)
+│   ├── client.py                   # httpx — Bearer agent token 자동 첨부
+│   ├── heartbeat.py                # asyncio loop, 30s 주기
+│   ├── collectors/                 # system / session / gpu / rtt
+│   └── service/                    # windows.py(NSSM), systemd.py(unit 헬퍼)
+└── tests/                          # pytest + pytest-httpx (34건)
+```
 
 ```
 frontend/                           # T16 React+Vite+TS 프런트엔드

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 SmartClassroom은 충남대 강의실 PC 원격 접속 플랫폼의 Broker 백엔드다 (Sunshine 호스트 + Moonlight 클라이언트 + Broker 오케스트레이터). 제품 정의는 `PRD.md`, 실행 계획과 태스크별 상태는 `EXP.md`에 있으며 둘 다 작업 범위를 잡을 때의 근거다. 코드·커밋 메시지 곳곳에서 `T03`, `T04a`, `T05` 같은 태스크 ID를 인용하므로 논의 단위로 그대로 사용한다.
 
-레포는 모노레포다. `broker/` (FastAPI 백엔드) + `frontend/` (T16 React+Vite+TS 프런트엔드). 향후 `agent/` (T11 호스트 에이전트), `client-patches/` (T13/T14 Moonlight fork)가 형제로 합류한다. `broker/` / `frontend/` 가 각자 루트라는 전제로 파일을 위로 끌어올리지 말 것.
+레포는 모노레포다. `broker/` (FastAPI 백엔드) + `frontend/` (T16 React+Vite+TS 프런트엔드) + `agent/` (T11 호스트 에이전트 사이드카, Python+uv). 향후 `client-patches/` (T13/T14 Moonlight fork)가 형제로 합류한다. `broker/` / `frontend/` / `agent/` 가 각자 루트라는 전제로 파일을 위로 끌어올리지 말 것.
 
 ## 자주 쓰는 명령어
 
@@ -51,6 +51,17 @@ pnpm typecheck    :: tsc strict, exactOptionalPropertyTypes
 pnpm build        :: tsc --noEmit + vite build
 ```
 
+```cmd
+:: 에이전트 (T11) — agent/ 안에서 실행 (자체 venv)
+cd agent
+uv sync --extra dev
+uv run pytest -v
+uv run ruff check .
+uv run mypy smartclassroom_agent
+uv run python -m smartclassroom_agent doctor --config agent.yaml    :: 1회 heartbeat 점검
+uv run python -m smartclassroom_agent run --config agent.yaml       :: 30s 주기 loop
+```
+
 ## 셸 규칙
 
 사용자에게 안내하는 셸 명령은 **Windows `cmd.exe` 문법**을 기본으로 한다 (`%VAR%`, `^` 줄바꿈, `nul` not `/dev/null`). PowerShell `$env:` 문법으로 답해서 여러 차례 수정을 받은 이력이 있다. Docker `exec` 내부에서는 bash 문법 OK.
@@ -90,6 +101,8 @@ broker/tests/        # pytest + pytest-asyncio + testcontainers + asgi-lifespan
 
 새 도메인 예외 추가 시 같은 분리 원칙: 매핑이 보편적이면 전역 핸들러, 라우트별 의미라면 라우터에서 변환.
 
+라우트별 1회성 4xx에는 `raise HTTPException(status_code=..., detail={"error": "snake_code", "message": "..."})` 형태를 쓴다 — `_http_exc` 핸들러(`core/errors.py:64`)가 dict detail을 받으면 `error`/`message`를 ErrorResponse 최상위로 끌어올리고 나머지 키는 `detail`로 보존한다. T11 `get_agent_host`의 `missing_bearer`/`invalid_agent_token`/`host_missing`이 이 패턴 — 도메인 예외 클래스를 새로 만들 가치는 없지만 응답 코드는 라우트가 의도한 snake_case로 내고 싶을 때. 문자열 detail은 기존 동작 그대로 (`"http_error"` 코드).
+
 422 핸들러는 `exc.errors()`에 `jsonable_encoder`를 한 번 건다 — Pydantic v2가 `ctx`에 raw `datetime`/`bytes`를 박아 두는데 orjson이 못 직렬화한다. 이 정규화를 제거하지 말 것.
 
 ### 미들웨어 순서는 LIFO이며 테스트가 보장
@@ -113,6 +126,7 @@ raw 토큰은 `secrets.token_urlsafe(32)` 로 만들고 **응답에만** 노출,
 | --- | --- | --- | --- | --- | --- | --- |
 | `session` | `core/auth_session.py` | NULL | NULL | now + session_ttl | 미사용 | `revoke_all_sessions_for_user()` |
 | `connect` | `services/token_service.py` (T07) | 예약 호스트 | 예약 id | `reservation.ends_at` | 1회 소비 | `revoke_active_tokens_for_reservation()` |
+| `agent` | `services/agent_token_service.py` (T11) | 해당 호스트 | NULL | now + agent_token_ttl_days | 미사용 (다회) | `revoke_active_agent_tokens(host_id)` |
 
 함의:
 - DB 덤프로 활성 토큰 재현 불가 (raw가 어디에도 없다).
@@ -143,6 +157,8 @@ T07 `POST /tokens/verify`처럼 **외부 사용자가 아닌 내부 컴포넌트
 - 모든 datetime 컬럼은 `TIMESTAMPTZ`, 모든 Python datetime은 `datetime.now(UTC)` 또는 tz-aware. naive 한 번 섞이면 EXCLUDE 비교가 조용히 깨진다.
 - `TSTZRANGE`는 ORM `add()` 매핑이 어색하다 — `reservation_service.create_reservation`이 raw `INSERT ... RETURNING id`를 쓰는 이유. 다른 range 컬럼을 추가할 때도 같은 패턴, ORM과 싸우지 말 것.
 - `asyncpg.Range`의 lower/upper가 naive로 돌아올 수 있다 — `reservation_bounds()`가 UTC 보정한다. 이 헬퍼를 통해 접근.
+- `hosts` 테이블의 ORM 속성은 `host_metadata`이지만 **DB 컬럼명은 `metadata`** — `Base.metadata` (SQLAlchemy 예약어) 충돌 회피로 `mapped_column("metadata", JSONB, ...)` 매핑(`domain/host.py:24`). raw SQL/psql/마이그레이션은 `metadata`, ORM 속성 접근은 `host.host_metadata`. 비슷하게 다른 테이블에서 SQLAlchemy 예약어와 겹치면 같은 분리 패턴.
+- JSONB 컬럼 변경은 **새 dict 할당으로 트리거** — `host.host_metadata["k"] = v` (in-place) 는 SQLAlchemy가 변경을 감지 못 해 commit이 noop. `metadata = dict(host.host_metadata or {}); metadata["k"] = v; host.host_metadata = metadata` 패턴 (`api/v1/agents.py:36-45`).
 
 ### Commit은 라우터, service는 안 한다
 
@@ -153,13 +169,22 @@ T07 `POST /tokens/verify`처럼 **외부 사용자가 아닌 내부 컴포넌트
 `core/config.py`의 `Settings`가 정책 자체다. 변경 = 재배포/재시작.
 
 - 예약: `reservation_*` 5종 (slot_minutes, max_concurrent, max_hours_per_day, max_duration_minutes, lookahead_days).
-- 토큰: `connect_token_grace_seconds` (T07 — `starts_at - grace ~ ends_at` 발급 게이트).
+- 토큰: `connect_token_grace_seconds` (T07 — `starts_at - grace ~ ends_at` 발급 게이트), `agent_token_ttl_days` (T11 — 기본 3650일, 다회 사용 long-lived).
 
 정책 테이블이 필요해지면 별도 태스크로 의식적으로 도입, 지나가다 만들지 말 것. 새 env 추가 시 `tests/conftest.py::_set_test_env` 에 testcontainer 기본값을 같이 넣을 것 (테스트가 `Settings(...)` 로 우회하지 못하도록).
 
 ### Auth provider는 Protocol + factory
 
 `core/auth.AuthProvider`가 계약, `providers/__init__.get_active_provider(settings)`가 `settings.auth_provider` 기반 `lru_cache` 팩토리. provider 추가 절차: `providers/` 하위에 Protocol 구현 → `_build_provider`에 이름 등록 → `Settings.auth_provider`의 `Literal`에 값 추가 → `api/v1/auth.py`에 라우트 추가. 라우터에서 구체 provider를 직접 import하지 말 것.
+
+### Agent ↔ Backend 계약 (T11)
+
+`agent/` (Python 사이드카)와 broker 라우터가 결합되는 invariant — 한 쪽만 보면 안 보인다:
+
+- **Agent 인증은 별도 Bearer 채널** — 세션 쿠키/admin 의존성과 다른 경로. `Authorization: Bearer <agent_token>` → `get_agent_host` 의존성(`api/deps.py:57`)이 `(Host, Token)` 튜플을 주입한다. 새 agent-facing 라우트도 `Depends(get_agent_host)` 만 — `get_current_user`/`require_admin` 섞지 말 것.
+- **raw agent_token은 enrollment + rotation에서만 1회 노출** — `POST /hosts` (admin 등록) 응답과 `POST /hosts/{id}/agent-token` (회전) 응답에만 raw 값 포함. DB에는 `sha256(raw)` 만 저장 — connect token과 동일 규칙. 분실하면 회전이 유일한 복구 경로.
+- **Heartbeat 라우트는 UPDATE-only** — `POST /agents/heartbeat` (`api/v1/agents.py`)는 `hosts.last_heartbeat_at` + `host_metadata` JSONB만 갱신, **audit_logs row를 쓰지 않는다**. 30s 주기 폭증 회피 — N개 호스트 × 2880 cycle/일이 audit로 쌓이면 운영 부담. T06 본구현 시 sampling/배치 흡수. 다른 고빈도 ingest 라우트도 같은 원칙 — audit는 상태 전이/보안 이벤트에만.
+- **상태 머신 전이는 v1 비범위** — heartbeat 라우터는 raw payload만 적재한다. `OFFLINE/IDLE/IN_USE/DEGRADED` 전이 룰은 T06 본구현이 흡수. 라우터에서 `host.status` 임시로 만지지 말 것 — T06 도입 시 이중 진실.
 
 ### Frontend ↔ Backend 계약 (T16)
 

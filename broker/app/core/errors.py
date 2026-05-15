@@ -59,14 +59,25 @@ def _request_id(request: Request) -> str | None:
 def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(HTTPException)
     async def _http_exc(request: Request, exc: HTTPException) -> ORJSONResponse:
-        return ORJSONResponse(
-            status_code=exc.status_code,
-            content=ErrorResponse(
+        # detail이 dict면 라우트가 의도한 에러 코드 + 부가 필드를 보존.
+        # str/None은 기존 동작 그대로 — "http_error" 코드 + message에 그대로 넣음.
+        if isinstance(exc.detail, dict):
+            detail = dict(exc.detail)
+            error_code = str(detail.pop("error", "http_error"))
+            message = str(detail.pop("message", "")) or error_code
+            body = ErrorResponse(
+                error=error_code,
+                message=message,
+                request_id=_request_id(request),
+                detail=detail or None,
+            )
+        else:
+            body = ErrorResponse(
                 error="http_error",
                 message=str(exc.detail),
                 request_id=_request_id(request),
-            ).model_dump(),
-        )
+            )
+        return ORJSONResponse(status_code=exc.status_code, content=body.model_dump())
 
     @app.exception_handler(RequestValidationError)
     async def _validation_exc(request: Request, exc: RequestValidationError) -> ORJSONResponse:

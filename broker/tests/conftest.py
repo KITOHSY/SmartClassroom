@@ -40,6 +40,8 @@ def _set_test_env() -> None:
     # T07 — 짧은 미래(now+5분)에 시드한 예약으로 발급 통과시키기 위해 grace 1시간으로 확대.
     # 시계 mock(freezegun) 의존성 회피.
     os.environ.setdefault("CONNECT_TOKEN_GRACE_SECONDS", "3600")
+    # T11 — agent 토큰 TTL을 짧게(7일) 줄여 만료 회귀 테스트가 빠르게 실행 가능하게.
+    os.environ.setdefault("AGENT_TOKEN_TTL_DAYS", "7")
 
 
 @pytest_asyncio.fixture

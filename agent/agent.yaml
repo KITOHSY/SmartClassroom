@@ -1,0 +1,5 @@
+broker_url: "http://localhost:8000"
+host_id: 1
+agent_token: "hNnEP5Z0gJKQumLZHr8rmL5RTE0hfBTOBIzHi8VLUcU"
+interval_seconds: 30
+log_level: INFO

@@ -1,0 +1,64 @@
+[project]
+name = "smartclassroom-agent"
+version = "0.1.0"
+description = "SmartClassroom host agent — heartbeat reporter for classroom PCs (T11)"
+requires-python = ">=3.12,<3.13"
+readme = "README.md"
+dependencies = [
+  "httpx>=0.28",
+  "psutil>=6.1",
+  "pydantic>=2.9",
+  "pydantic-settings>=2.6",
+  "pyyaml>=6.0",
+  "structlog>=24.4",
+  "typer>=0.13",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3",
+  "pytest-asyncio>=0.24",
+  "pytest-httpx>=0.32",
+  "ruff>=0.7",
+  "mypy>=1.13",
+  "types-PyYAML>=6.0",
+  "types-psutil>=6.1",
+]
+
+[project.scripts]
+smartclassroom-agent = "smartclassroom_agent.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["smartclassroom_agent"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["smartclassroom_agent"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC", "S", "RUF"]
+ignore = ["S101", "B008"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S105", "S106", "S603", "S607"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+plugins = ["pydantic.mypy"]
+explicit_package_bases = true
+mypy_path = "."
+
+[[tool.mypy.overrides]]
+module = ["pytest_httpx.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+addopts = "-ra --strict-markers"
+testpaths = ["tests"]

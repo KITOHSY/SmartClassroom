@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     # `starts_at - grace ~ ends_at` 윈도우에서 발급 가능. 변경은 재배포 또는 env 갱신.
     connect_token_grace_seconds: int = 60
 
+    # 에이전트 토큰 정책 (T11) — admin 발급, host가 살아있는 동안 유효.
+    # 회전은 admin이 명시적 revoke + 재발급. 기본 3650일(10년).
+    agent_token_ttl_days: int = 3650
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -19,7 +19,9 @@
       "Bash(uv run *)",
       "Bash(git stash *)",
       "Bash(Get-ChildItem -Force)",
-      "Bash(Select-Object Name)"
+      "Bash(Select-Object Name)",
+      "Bash(findstr /E \"^d\")",
+      "PowerShell(Get-ChildItem -Path \"D:\\\\Hongsun\\\\SmartClassroom\" | Select-Object Name, @{Name=\"Type\";Expression={if\\($_.PSIsContainer\\){\"DIR\"}else{\"FILE\"}}} | Format-Table)"
     ]
   }
 }

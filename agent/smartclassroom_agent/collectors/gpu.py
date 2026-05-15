@@ -10,9 +10,7 @@ import shutil
 import subprocess
 from typing import TypedDict
 
-NVIDIA_SMI_QUERY = (
-    "name,utilization.gpu,memory.used,memory.total,temperature.gpu"
-)
+NVIDIA_SMI_QUERY = "name,utilization.gpu,memory.used,memory.total,temperature.gpu"
 
 
 class GpuSnapshot(TypedDict):

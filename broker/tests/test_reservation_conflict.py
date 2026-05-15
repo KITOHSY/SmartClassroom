@@ -20,9 +20,7 @@ def _slot(hours_ahead: int, duration_minutes: int = 60) -> tuple[str, str]:
 
 
 @pytest.mark.asyncio
-async def test_exact_slot_conflict_returns_409(
-    auth_client: AuthClientFactory, host: int
-) -> None:
+async def test_exact_slot_conflict_returns_409(auth_client: AuthClientFactory, host: int) -> None:
     a = await auth_client()
     b = await auth_client()
     starts, ends = _slot(2)
@@ -43,9 +41,7 @@ async def test_exact_slot_conflict_returns_409(
 
 
 @pytest.mark.asyncio
-async def test_overlap_partial_returns_409(
-    auth_client: AuthClientFactory, host: int
-) -> None:
+async def test_overlap_partial_returns_409(auth_client: AuthClientFactory, host: int) -> None:
     a = await auth_client()
     b = await auth_client()
     s1, e1 = _slot(3, duration_minutes=60)  # 예: 10:00-11:00
@@ -72,9 +68,7 @@ async def test_overlap_partial_returns_409(
 
 
 @pytest.mark.asyncio
-async def test_rebook_after_cancel_succeeds(
-    auth_client: AuthClientFactory, host: int
-) -> None:
+async def test_rebook_after_cancel_succeeds(auth_client: AuthClientFactory, host: int) -> None:
     a = await auth_client()
     b = await auth_client()
     starts, ends = _slot(4)
@@ -99,9 +93,7 @@ async def test_rebook_after_cancel_succeeds(
 
 
 @pytest.mark.asyncio
-async def test_adjacent_slot_does_not_conflict(
-    auth_client: AuthClientFactory, host: int
-) -> None:
+async def test_adjacent_slot_does_not_conflict(auth_client: AuthClientFactory, host: int) -> None:
     """[)' 반-개구간 → 끝나는 시각과 시작 시각이 같으면 겹치지 않아야 함."""
     a = await auth_client()
     b = await auth_client()

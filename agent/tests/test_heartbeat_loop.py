@@ -22,9 +22,7 @@ async def test_loop_runs_max_cycles_and_sends_payload(httpx_mock: HTTPXMock) -> 
 
     # 2 cycle x (healthz + heartbeat) = 총 4 응답 등록
     for _ in range(2):
-        httpx_mock.add_response(
-            url="http://broker.test/healthz", json={"status": "ok"}
-        )
+        httpx_mock.add_response(url="http://broker.test/healthz", json={"status": "ok"})
         httpx_mock.add_response(
             url="http://broker.test/api/v1/agents/heartbeat",
             method="POST",

@@ -42,6 +42,9 @@ def _set_test_env() -> None:
     os.environ.setdefault("CONNECT_TOKEN_GRACE_SECONDS", "3600")
     # T11 — agent 토큰 TTL을 짧게(7일) 줄여 만료 회귀 테스트가 빠르게 실행 가능하게.
     os.environ.setdefault("AGENT_TOKEN_TTL_DAYS", "7")
+    # T06 — 짧게 줄여 monitor task 회귀 테스트가 빠르게(2s tick / 10s offline) 실행 가능하게.
+    os.environ.setdefault("HOST_OFFLINE_AFTER_SECONDS", "10")
+    os.environ.setdefault("HOST_STATUS_MONITOR_INTERVAL_SECONDS", "2")
 
 
 @pytest_asyncio.fixture

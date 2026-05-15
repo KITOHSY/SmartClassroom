@@ -57,6 +57,15 @@ class Settings(BaseSettings):
     # 회전은 admin이 명시적 revoke + 재발급. 기본 3650일(10년).
     agent_token_ttl_days: int = 3650
 
+    # 호스트 상태 머신 정책 (T06).
+    # heartbeat 마지막 수신 후 N초 경과 시 OFFLINE 전이 (3 cycle 누락 = 90s 기본).
+    host_offline_after_seconds: int = 90
+    # heartbeat 메트릭이 임계 이상이면 DEGRADED 전이.
+    host_degraded_cpu_pct: float = 90.0
+    host_degraded_mem_pct: float = 95.0
+    # OFFLINE detector tick 주기 (background task).
+    host_status_monitor_interval_seconds: int = 60
+
 
 @lru_cache
 def get_settings() -> Settings:

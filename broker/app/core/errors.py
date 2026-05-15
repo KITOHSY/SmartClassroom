@@ -115,9 +115,7 @@ def register_error_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(ReservationQuotaError)
-    async def _reservation_quota(
-        request: Request, exc: ReservationQuotaError
-    ) -> ORJSONResponse:
+    async def _reservation_quota(request: Request, exc: ReservationQuotaError) -> ORJSONResponse:
         return ORJSONResponse(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             content=ErrorResponse(

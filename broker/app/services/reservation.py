@@ -63,9 +63,7 @@ def _is_grid_aligned(dt: datetime, slot_minutes: int) -> bool:
         return False
     if slot_minutes == 30:
         return dt.minute in (0, 30) and dt.second == 0 and dt.microsecond == 0
-    return (
-        dt.minute % slot_minutes == 0 and dt.second == 0 and dt.microsecond == 0
-    )
+    return dt.minute % slot_minutes == 0 and dt.second == 0 and dt.microsecond == 0
 
 
 def _validate_window(starts_at: datetime, ends_at: datetime) -> None:
@@ -255,9 +253,7 @@ async def create_reservation(
     return reservation
 
 
-async def cancel_reservation(
-    db: AsyncSession, user: User, reservation_id: int
-) -> Reservation:
+async def cancel_reservation(db: AsyncSession, user: User, reservation_id: int) -> Reservation:
     """예약 취소 — soft delete. 본인 또는 admin만 가능. 이미 CANCELED면 멱등."""
     reservation = await db.get(Reservation, reservation_id)
     if reservation is None:
@@ -288,9 +284,7 @@ async def cancel_reservation(
     return reservation
 
 
-async def get_reservation(
-    db: AsyncSession, user: User, reservation_id: int
-) -> Reservation:
+async def get_reservation(db: AsyncSession, user: User, reservation_id: int) -> Reservation:
     reservation = await db.get(Reservation, reservation_id)
     if reservation is None:
         raise ReservationNotFoundError(f"reservation_id={reservation_id} 없음")
@@ -308,9 +302,7 @@ async def list_reservations(
     user_id_filter: int | None = None,
 ) -> list[Reservation]:
     """일반 사용자는 본인만, admin은 user_id_filter 허용. 활성 상태만 반환(CANCELED 제외)."""
-    stmt = select(Reservation).where(
-        Reservation.status.in_(ACTIVE_RESERVATION_STATUSES)
-    )
+    stmt = select(Reservation).where(Reservation.status.in_(ACTIVE_RESERVATION_STATUSES))
 
     if viewer.role == "admin":
         if user_id_filter is not None:
@@ -466,6 +458,27 @@ def _is_overlap_violation(exc: IntegrityError) -> bool:
     # diag.constraint_name이 비어 있으면 메시지로도 한 번 확인(asyncpg 일부 버전 대비).
     message = str(orig or exc)
     return RESERVATION_OVERLAP_CONSTRAINT in message
+
+
+async def get_active_reservation_for_host(
+    db: AsyncSession, host_id: int, *, at_time: datetime
+) -> Reservation | None:
+    """T06 IN_USE 판정용 — 주어진 시각이 [starts_at, ends_at) 안인 CONFIRMED 예약 1건.
+
+    호스트당 동시 활성은 0001의 EXCLUDE GIST 제약이 1건 이하로 강제하므로 limit(1) 안전.
+    COMPLETED는 통상 종료 처리된 상태라 `time_range @> now`에는 매치되지 않는다.
+    """
+    stmt = (
+        select(Reservation)
+        .where(
+            Reservation.host_id == host_id,
+            Reservation.status == "CONFIRMED",
+            text("time_range @> :at_time").bindparams(at_time=at_time),
+        )
+        .limit(1)
+    )
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none()
 
 
 # Helper for router — extract (starts_at, ends_at) from reservation.time_range.

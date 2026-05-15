@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
@@ -13,6 +14,8 @@ from broker.app.core.middleware import (
     RequestIdMiddleware,
 )
 from broker.app.infra.db import dispose_engine
+from broker.app.services.host_events import HostEventBroker
+from broker.app.services.host_status_monitor import run_monitor_loop
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import ORJSONResponse
@@ -46,10 +49,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         version=settings.app_version,
         auth_provider=settings.auth_provider,
     )
+
+    # T06 — SSE 이벤트 broker + stale heartbeat → OFFLINE detector task.
+    app.state.host_event_broker = HostEventBroker()
+    monitor_stop = asyncio.Event()
+    app.state.host_monitor_stop = monitor_stop
+    monitor_task = asyncio.create_task(
+        run_monitor_loop(app.state.host_event_broker, monitor_stop, settings)
+    )
+    app.state.host_monitor_task = monitor_task
+
     try:
         yield
     finally:
         log.info("broker.shutdown")
+        monitor_stop.set()
+        try:
+            await asyncio.wait_for(monitor_task, timeout=5.0)
+        except (TimeoutError, asyncio.CancelledError):
+            monitor_task.cancel()
+        await app.state.host_event_broker.close()
         await dispose_engine()
 
 

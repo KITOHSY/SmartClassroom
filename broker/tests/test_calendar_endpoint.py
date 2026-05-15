@@ -20,9 +20,7 @@ def _next_day_window() -> tuple[datetime, datetime]:
 
 
 @pytest.mark.asyncio
-async def test_calendar_returns_slots_for_window(
-    auth_client: AuthClientFactory, host: int
-) -> None:
+async def test_calendar_returns_slots_for_window(auth_client: AuthClientFactory, host: int) -> None:
     a = await auth_client()
     win_from, win_to = _next_day_window()
 
@@ -60,9 +58,7 @@ async def test_calendar_returns_slots_for_window(
 
 
 @pytest.mark.asyncio
-async def test_calendar_excludes_canceled(
-    auth_client: AuthClientFactory, host: int
-) -> None:
+async def test_calendar_excludes_canceled(auth_client: AuthClientFactory, host: int) -> None:
     a = await auth_client()
     win_from, win_to = _next_day_window()
     res_start = win_from
@@ -103,9 +99,7 @@ async def test_calendar_excludes_canceled(
 
 
 @pytest.mark.asyncio
-async def test_calendar_masks_other_users(
-    auth_client: AuthClientFactory, host: int
-) -> None:
+async def test_calendar_masks_other_users(auth_client: AuthClientFactory, host: int) -> None:
     owner = await auth_client()
     viewer = await auth_client()
     win_from, win_to = _next_day_window()
@@ -138,9 +132,7 @@ async def test_calendar_masks_other_users(
 
 
 @pytest.mark.asyncio
-async def test_calendar_window_validation(
-    auth_client: AuthClientFactory, host: int
-) -> None:
+async def test_calendar_window_validation(auth_client: AuthClientFactory, host: int) -> None:
     a = await auth_client()
     win_from, win_to = _next_day_window()
     # off-grid from.

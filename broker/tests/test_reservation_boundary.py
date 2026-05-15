@@ -17,9 +17,7 @@ def _round_to_grid() -> datetime:
 
 
 @pytest.mark.asyncio
-async def test_off_grid_starts_at_rejected(
-    auth_client: AuthClientFactory, host: int
-) -> None:
+async def test_off_grid_starts_at_rejected(auth_client: AuthClientFactory, host: int) -> None:
     a = await auth_client()
     base = _round_to_grid() + timedelta(hours=2)
     # 30분 그리드 위반: 분이 15.
@@ -33,9 +31,7 @@ async def test_off_grid_starts_at_rejected(
 
 
 @pytest.mark.asyncio
-async def test_off_grid_ends_at_rejected(
-    auth_client: AuthClientFactory, host: int
-) -> None:
+async def test_off_grid_ends_at_rejected(auth_client: AuthClientFactory, host: int) -> None:
     a = await auth_client()
     base = _round_to_grid() + timedelta(hours=2)
     starts = base.isoformat()
@@ -48,9 +44,7 @@ async def test_off_grid_ends_at_rejected(
 
 
 @pytest.mark.asyncio
-async def test_naive_datetime_rejected(
-    auth_client: AuthClientFactory, host: int
-) -> None:
+async def test_naive_datetime_rejected(auth_client: AuthClientFactory, host: int) -> None:
     a = await auth_client()
     base = _round_to_grid() + timedelta(hours=2)
     # tz 정보 제거.
@@ -64,9 +58,7 @@ async def test_naive_datetime_rejected(
 
 
 @pytest.mark.asyncio
-async def test_past_start_rejected(
-    auth_client: AuthClientFactory, host: int
-) -> None:
+async def test_past_start_rejected(auth_client: AuthClientFactory, host: int) -> None:
     a = await auth_client()
     base = _round_to_grid() - timedelta(hours=2)  # 2시간 전.
     starts = base.isoformat()
@@ -80,9 +72,7 @@ async def test_past_start_rejected(
 
 
 @pytest.mark.asyncio
-async def test_lookahead_exceeded_rejected(
-    auth_client: AuthClientFactory, host: int
-) -> None:
+async def test_lookahead_exceeded_rejected(auth_client: AuthClientFactory, host: int) -> None:
     a = await auth_client()
     base = _round_to_grid() + timedelta(days=20)  # default lookahead=14.
     starts = base.isoformat()
@@ -96,9 +86,7 @@ async def test_lookahead_exceeded_rejected(
 
 
 @pytest.mark.asyncio
-async def test_duration_exceeded_rejected(
-    auth_client: AuthClientFactory, host: int
-) -> None:
+async def test_duration_exceeded_rejected(auth_client: AuthClientFactory, host: int) -> None:
     a = await auth_client()
     base = _round_to_grid() + timedelta(hours=2)
     starts = base.isoformat()
@@ -113,9 +101,7 @@ async def test_duration_exceeded_rejected(
 
 
 @pytest.mark.asyncio
-async def test_starts_after_ends_rejected(
-    auth_client: AuthClientFactory, host: int
-) -> None:
+async def test_starts_after_ends_rejected(auth_client: AuthClientFactory, host: int) -> None:
     a = await auth_client()
     base = _round_to_grid() + timedelta(hours=2)
     starts = (base + timedelta(hours=1)).isoformat()

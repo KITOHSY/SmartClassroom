@@ -20,9 +20,7 @@ def _slot(hours_ahead: int) -> tuple[str, str]:
 
 
 @pytest.mark.asyncio
-async def test_other_user_get_returns_404(
-    auth_client: AuthClientFactory, host: int
-) -> None:
+async def test_other_user_get_returns_404(auth_client: AuthClientFactory, host: int) -> None:
     owner = await auth_client()
     intruder = await auth_client()
     s, e = _slot(2)
@@ -38,9 +36,7 @@ async def test_other_user_get_returns_404(
 
 
 @pytest.mark.asyncio
-async def test_other_user_cancel_returns_404(
-    auth_client: AuthClientFactory, host: int
-) -> None:
+async def test_other_user_cancel_returns_404(auth_client: AuthClientFactory, host: int) -> None:
     owner = await auth_client()
     intruder = await auth_client()
     s, e = _slot(3)
@@ -110,9 +106,7 @@ async def test_list_only_returns_own_for_normal_user(
 
 
 @pytest.mark.asyncio
-async def test_admin_list_with_user_id_filter(
-    auth_client: AuthClientFactory, host: int
-) -> None:
+async def test_admin_list_with_user_id_filter(auth_client: AuthClientFactory, host: int) -> None:
     target = await auth_client()
     admin = await auth_client(role="admin")
     s, e = _slot(7)

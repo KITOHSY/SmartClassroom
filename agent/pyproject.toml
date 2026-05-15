@@ -10,6 +10,7 @@ dependencies = [
   "pydantic>=2.9",
   "pydantic-settings>=2.6",
   "pyyaml>=6.0",
+  "sse-starlette>=3.4.4",
   "structlog>=24.4",
   "typer>=0.13",
 ]
@@ -62,3 +63,8 @@ ignore_missing_imports = true
 asyncio_mode = "auto"
 addopts = "-ra --strict-markers"
 testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "freezegun>=1.5.5",
+]

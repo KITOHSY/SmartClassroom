@@ -37,9 +37,7 @@ def test_default_values_applied(tmp_path: Path) -> None:
 
     path = _write(
         tmp_path,
-        "broker_url: https://broker.example.com\n"
-        "host_id: 1\n"
-        "agent_token: " + ("a" * 32) + "\n",
+        "broker_url: https://broker.example.com\nhost_id: 1\nagent_token: " + ("a" * 32) + "\n",
     )
     cfg = load_config(path)
     assert cfg.interval_seconds == 30.0

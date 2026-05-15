@@ -14,9 +14,7 @@ if TYPE_CHECKING:
 def _agent_yaml(tmp_path: Path, broker_url: str) -> Path:
     p = tmp_path / "agent.yaml"
     p.write_text(
-        f"broker_url: {broker_url}\n"
-        "host_id: 1\n"
-        "agent_token: " + ("a" * 32) + "\n",
+        f"broker_url: {broker_url}\nhost_id: 1\nagent_token: " + ("a" * 32) + "\n",
         encoding="utf-8",
     )
     return p

@@ -22,9 +22,7 @@ def _future_slot(hours_ahead: int = 1) -> tuple[str, str]:
 
 
 @pytest.mark.asyncio
-async def test_create_then_get_then_cancel(
-    auth_client: AuthClientFactory, host: int
-) -> None:
+async def test_create_then_get_then_cancel(auth_client: AuthClientFactory, host: int) -> None:
     ac: AsyncClient = await auth_client()
     starts, ends = _future_slot(2)
     r = await ac.post(
@@ -117,12 +115,16 @@ async def test_audit_log_records_create_and_cancel(
     factory = get_session_factory()
     async with factory() as db:
         rows = (
-            await db.execute(
-                select(AuditLog.action).where(
-                    AuditLog.target_kind == "reservation",
-                    AuditLog.target_id == rid,
+            (
+                await db.execute(
+                    select(AuditLog.action).where(
+                        AuditLog.target_kind == "reservation",
+                        AuditLog.target_id == rid,
+                    )
                 )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
     assert "reservation_create" in rows
     assert "reservation_cancel" in rows

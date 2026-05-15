@@ -19,6 +19,7 @@ dependencies = [
   "httpx>=0.28",
   "orjson>=3.10",
   "jinja2>=3.1",
+  "sse-starlette>=2.1",
 ]
 
 [project.optional-dependencies]
@@ -30,6 +31,7 @@ dev = [
   "mypy>=1.13",
   "asgi-lifespan>=2.1",
   "testcontainers[postgres]>=4.8",
+  "freezegun>=1.5",
 ]
 
 [build-system]

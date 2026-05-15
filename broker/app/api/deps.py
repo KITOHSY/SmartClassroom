@@ -18,6 +18,7 @@ from broker.app.domain.user import User
 from broker.app.infra.db import get_db
 from broker.app.providers import get_active_provider
 from broker.app.services.agent_token_service import verify_agent_token
+from broker.app.services.host_events import HostEventBroker
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,6 +26,7 @@ __all__ = [
     "get_agent_host",
     "get_current_user",
     "get_db",
+    "get_host_event_broker",
     "get_optional_user",
     "require_admin",
 ]
@@ -52,6 +54,20 @@ async def require_admin(user: User = Depends(get_current_user)) -> User:
     if user.role != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="관리자 권한 필요")
     return user
+
+
+async def get_host_event_broker(request: Request) -> HostEventBroker:
+    """T06 — lifespan에서 만든 단일 broker 인스턴스 주입.
+
+    테스트(`client_no_lifespan`)는 lifespan을 안 돌리므로 이 의존성 사용 라우트는
+    `client` fixture(LifespanManager) 사용 필수.
+    """
+    broker: HostEventBroker | None = getattr(request.app.state, "host_event_broker", None)
+    if broker is None:
+        # 안전망 — lifespan이 set 안 한 환경에서도 publish noop 인스턴스 제공.
+        broker = HostEventBroker()
+        request.app.state.host_event_broker = broker
+    return broker
 
 
 async def get_agent_host(

@@ -15,13 +15,16 @@ T06 본구현 시 다음이 추가/흡수된다:
 
 from __future__ import annotations
 
+from datetime import datetime
+
 from broker.app.api.deps import get_current_user, get_db, require_admin
-from broker.app.api.schemas.host import HostCreate, HostRead, HostWithAgentToken
+from broker.app.api.schemas.host import HostAvailable, HostCreate, HostRead, HostWithAgentToken
+from broker.app.core.errors import InvalidReservationWindowError
 from broker.app.domain.host import Host
 from broker.app.domain.user import User
 from broker.app.services.agent_token_service import issue_agent_token
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, HTTPException, Query, status
+from sqlalchemy import select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -55,6 +58,57 @@ async def list_hosts_endpoint(
     result = await db.execute(select(Host).order_by(Host.id))
     hosts = result.scalars().all()
     return [HostRead.model_validate(h) for h in hosts]
+
+
+def _ensure_grid_aligned(dt: datetime, slot_minutes: int = 30) -> None:
+    """T05 _is_grid_aligned와 동일 패턴 — 30분 그리드 + tz-aware 강제."""
+    if dt.tzinfo is None:
+        raise InvalidReservationWindowError("from_/to_는 timezone-aware여야 합니다")
+    if not (dt.minute % slot_minutes == 0 and dt.second == 0 and dt.microsecond == 0):
+        raise InvalidReservationWindowError(
+            f"from_/to_는 {slot_minutes}분 그리드에 정렬되어야 합니다",
+            detail={"slot_minutes": slot_minutes},
+        )
+
+
+@router.get("/available", response_model=list[HostAvailable])
+async def list_available_hosts_endpoint(
+    db: AsyncSession = Depends(get_db),
+    _user: User = Depends(get_current_user),
+    from_: datetime | None = Query(default=None, alias="from"),
+    to: datetime | None = Query(default=None),
+) -> list[HostAvailable]:
+    """T06 — '접속 가능' 호스트 목록(`status='IDLE'`).
+
+    옵션 `?from=&to=` (반열림 `[from, to)`, 30분 그리드)이 함께 오면 해당 슬롯에
+    활성 CONFIRMED 예약이 있는 호스트는 제외 — T17 가용 PC 화면이 미리 활용.
+    둘 중 하나만 오면 422 (의미 모호).
+    """
+    if (from_ is None) != (to is None):
+        raise InvalidReservationWindowError(
+            "from_과 to는 함께 지정해야 합니다",
+            detail={"from": from_, "to": to},
+        )
+
+    stmt = select(Host).where(Host.status == "IDLE")
+
+    if from_ is not None and to is not None:
+        _ensure_grid_aligned(from_)
+        _ensure_grid_aligned(to)
+        if from_ >= to:
+            raise InvalidReservationWindowError("from_은 to보다 이전이어야 합니다")
+        stmt = stmt.where(
+            text(
+                "NOT EXISTS (SELECT 1 FROM reservations r "
+                "WHERE r.host_id = hosts.id AND r.status='CONFIRMED' "
+                "AND r.time_range && tstzrange(:from_, :to_, '[)'))"
+            ).bindparams(from_=from_, to_=to)
+        )
+
+    stmt = stmt.order_by(Host.id)
+    result = await db.execute(stmt)
+    hosts = result.scalars().all()
+    return [HostAvailable.model_validate(h) for h in hosts]
 
 
 @router.post(

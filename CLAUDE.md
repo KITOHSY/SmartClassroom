@@ -157,6 +157,7 @@ T07 `POST /tokens/verify`처럼 **외부 사용자가 아닌 내부 컴포넌트
 - 모든 datetime 컬럼은 `TIMESTAMPTZ`, 모든 Python datetime은 `datetime.now(UTC)` 또는 tz-aware. naive 한 번 섞이면 EXCLUDE 비교가 조용히 깨진다.
 - `TSTZRANGE`는 ORM `add()` 매핑이 어색하다 — `reservation_service.create_reservation`이 raw `INSERT ... RETURNING id`를 쓰는 이유. 다른 range 컬럼을 추가할 때도 같은 패턴, ORM과 싸우지 말 것.
 - `asyncpg.Range`의 lower/upper가 naive로 돌아올 수 있다 — `reservation_bounds()`가 UTC 보정한다. 이 헬퍼를 통해 접근.
+- SQLAlchemy `text()`의 bind parameter는 **`:name::type` 캐스트 문법과 충돌** — `:` 두 개를 두 번째 파라미터 시작으로 파싱해 `IndexError`/`InvalidRequestError`. range/타입 캐스트가 필요하면 PostgreSQL operator·함수가 추론하게 두기 (`get_active_reservation_for_host`의 `text("time_range @> :at_time")` — `at_time` 단독, `::timestamptz` 없이 `@>` 좌변에서 timestamptz 추론). 굳이 명시 캐스트가 필요하면 `tstzrange(:from_, :to_, '[)')`처럼 함수 호출로 감쌀 것.
 - `hosts` 테이블의 ORM 속성은 `host_metadata`이지만 **DB 컬럼명은 `metadata`** — `Base.metadata` (SQLAlchemy 예약어) 충돌 회피로 `mapped_column("metadata", JSONB, ...)` 매핑(`domain/host.py:24`). raw SQL/psql/마이그레이션은 `metadata`, ORM 속성 접근은 `host.host_metadata`. 비슷하게 다른 테이블에서 SQLAlchemy 예약어와 겹치면 같은 분리 패턴.
 - JSONB 컬럼 변경은 **새 dict 할당으로 트리거** — `host.host_metadata["k"] = v` (in-place) 는 SQLAlchemy가 변경을 감지 못 해 commit이 noop. `metadata = dict(host.host_metadata or {}); metadata["k"] = v; host.host_metadata = metadata` 패턴 (`api/v1/agents.py:36-45`).
 
@@ -170,6 +171,7 @@ T07 `POST /tokens/verify`처럼 **외부 사용자가 아닌 내부 컴포넌트
 
 - 예약: `reservation_*` 5종 (slot_minutes, max_concurrent, max_hours_per_day, max_duration_minutes, lookahead_days).
 - 토큰: `connect_token_grace_seconds` (T07 — `starts_at - grace ~ ends_at` 발급 게이트), `agent_token_ttl_days` (T11 — 기본 3650일, 다회 사용 long-lived).
+- 호스트 상태(T06): `host_offline_after_seconds` / `host_status_monitor_interval_seconds` / `host_degraded_cpu_pct` / `host_degraded_mem_pct`. **`host_offline_after_seconds`는 agent의 `interval_seconds`보다 반드시 커야** (권장 ≥ 1.5×). 작거나 같으면 monitor가 IDLE↔OFFLINE flapping — heartbeat가 도착하기 전에 stale 판정. agent 기본 30s → 최소 45s. 테스트 conftest는 `HOST_OFFLINE_AFTER_SECONDS=10` + `HOST_STATUS_MONITOR_INTERVAL_SECONDS=2`로 빠른 검증을 위해 의도적으로 작게 — production .env에서 동일 값 쓰지 말 것.
 
 정책 테이블이 필요해지면 별도 태스크로 의식적으로 도입, 지나가다 만들지 말 것. 새 env 추가 시 `tests/conftest.py::_set_test_env` 에 testcontainer 기본값을 같이 넣을 것 (테스트가 `Settings(...)` 로 우회하지 못하도록).
 
@@ -177,14 +179,18 @@ T07 `POST /tokens/verify`처럼 **외부 사용자가 아닌 내부 컴포넌트
 
 `core/auth.AuthProvider`가 계약, `providers/__init__.get_active_provider(settings)`가 `settings.auth_provider` 기반 `lru_cache` 팩토리. provider 추가 절차: `providers/` 하위에 Protocol 구현 → `_build_provider`에 이름 등록 → `Settings.auth_provider`의 `Literal`에 값 추가 → `api/v1/auth.py`에 라우트 추가. 라우터에서 구체 provider를 직접 import하지 말 것.
 
-### Agent ↔ Backend 계약 (T11)
+### Agent ↔ Backend 계약 (T11 + T06)
 
 `agent/` (Python 사이드카)와 broker 라우터가 결합되는 invariant — 한 쪽만 보면 안 보인다:
 
 - **Agent 인증은 별도 Bearer 채널** — 세션 쿠키/admin 의존성과 다른 경로. `Authorization: Bearer <agent_token>` → `get_agent_host` 의존성(`api/deps.py:57`)이 `(Host, Token)` 튜플을 주입한다. 새 agent-facing 라우트도 `Depends(get_agent_host)` 만 — `get_current_user`/`require_admin` 섞지 말 것.
 - **raw agent_token은 enrollment + rotation에서만 1회 노출** — `POST /hosts` (admin 등록) 응답과 `POST /hosts/{id}/agent-token` (회전) 응답에만 raw 값 포함. DB에는 `sha256(raw)` 만 저장 — connect token과 동일 규칙. 분실하면 회전이 유일한 복구 경로.
-- **Heartbeat 라우트는 UPDATE-only** — `POST /agents/heartbeat` (`api/v1/agents.py`)는 `hosts.last_heartbeat_at` + `host_metadata` JSONB만 갱신, **audit_logs row를 쓰지 않는다**. 30s 주기 폭증 회피 — N개 호스트 × 2880 cycle/일이 audit로 쌓이면 운영 부담. T06 본구현 시 sampling/배치 흡수. 다른 고빈도 ingest 라우트도 같은 원칙 — audit는 상태 전이/보안 이벤트에만.
-- **상태 머신 전이는 v1 비범위** — heartbeat 라우터는 raw payload만 적재한다. `OFFLINE/IDLE/IN_USE/DEGRADED` 전이 룰은 T06 본구현이 흡수. 라우터에서 `host.status` 임시로 만지지 말 것 — T06 도입 시 이중 진실.
+- **Heartbeat 라우트는 UPDATE-only + status 전이 평가** — `POST /agents/heartbeat` (`api/v1/agents.py`)는 `hosts.last_heartbeat_at` + `host_metadata` JSONB 갱신 + T06 status 전이(`evaluate_host_status` → `transition_host`)를 한 트랜잭션에서 수행. audit_logs는 status 변화 시에만 1행(`host_status_change`) — 30s 주기 폭증 회피. 다른 고빈도 ingest도 같은 원칙: audit는 상태 전이/보안 이벤트에만.
+- **상태 머신 전이는 두 경로** — ① heartbeat 라우터가 즉시 IDLE/IN_USE/DEGRADED 평가 (방금 받은 메트릭 기반), ② `host_status_monitor` background task(`services/host_status_monitor.py`, lifespan에서 60s tick)가 stale heartbeat → OFFLINE. **OFFLINE 전이는 monitor의 단독 책임** — 라우터가 OFFLINE을 직접 set하지 말 것.
+- **상태 전이 평가는 순수 함수** — `evaluate_host_status` (`services/host_status.py`)는 DB I/O 없이 메트릭만 받아 다음 status를 반환. 새 룰 추가는 이 함수 + 단위 테스트(`test_host_status_evaluator.py`)로. `transition_host` 헬퍼만 audit + SSE publish 부수효과를 갖는다.
+- **SSE 채널은 단일 broker 인스턴스 가정** — `HostEventBroker` (`services/host_events.py`)는 in-process asyncio.Queue per subscriber. `app.state.host_event_broker`로 lifespan에 묶이며, `get_host_event_broker` 의존성으로만 접근. 멀티 broker 인스턴스 스케일아웃 시 Redis pubsub 등 외부 broker 도입 필요 (§11 A10).
+- **`HOST_*` Prometheus gauge는 hostname 라벨 단일** — `core/metrics.py`의 `HOST_CPU_PERCENT` / `HOST_MEM_PERCENT` / `HOST_GPU_PERCENT` / `HOST_STATUS_INFO`. host_id 동시 라벨링은 high-cardinality 회피로 금지. 1m/5m 평균은 PromQL `avg_over_time(...[1m])`이 담당 — broker DB는 latest만(`host_metadata.metrics`). OFFLINE 전이 시 `clear_host_metrics(hostname)`이 cpu/mem/gpu 라벨을 삭제(`status_info`만 유지) — 죽은 호스트가 마지막 부하값으로 alert 일으키는 것 방지.
+- **`ENABLE_METRICS`는 `Settings`에 없다 — `prometheus-fastapi-instrumentator`가 `os.environ`을 직접 검사** — `core/metrics.py:setup_metrics`의 `should_respect_env_var=True`. pydantic-settings는 `.env`를 Settings 필드로만 로드하지 process env에 propagate 하지 않으므로, host에서 `uv run uvicorn` 직접 기동할 땐 cmd `set ENABLE_METRICS=true` (또는 셸 export)를 별도로 거쳐야 `/metrics` 노출. docker compose는 `environment:` 항목이 process env로 들어가 자동 충족. 새로 같은 라이브러리 옵션을 더 활성화할 때도 같은 채널 — `.env`만 믿지 말 것.
 
 ### Frontend ↔ Backend 계약 (T16)
 
@@ -198,6 +204,8 @@ T07 `POST /tokens/verify`처럼 **외부 사용자가 아닌 내부 컴포넌트
 `tests/conftest.py::pg_url`(session-scoped)이 실제 Postgres 16을 Docker로 띄우고 `alembic upgrade head`를 적용한다. `client` fixture가 그 DB URL로 앱을 재생성하고 `get_settings` 캐시를 비운다. 새로운 `Settings` env를 추가하면 `client` fixture 호출 전에 `os.environ`으로 주입할 것 — `Settings(...)` kwargs로 우회하지 말고 `_set_test_env` 패턴을 따른다.
 
 인증된 client는 `auth_client(role="user"|"admin")` fixture를 사용. 테스트에서 세션 쿠키를 손으로 만들지 말 것.
+
+T05 `starts_at >= now` 정책 때문에 **NOW를 덮는 활성 예약은 service/API로 못 만든다** — T06 IN_USE 평가처럼 "지금 진행 중인 예약"이 전제인 시나리오는 raw SQL `INSERT INTO reservations (..., time_range, status) VALUES (..., tstzrange(now(), now() + interval '30 minutes', '[)'), 'CONFIRMED')`로 정책을 우회 (`test_heartbeat_in_use_with_active_reservation`). 이 우회는 의도적인 테스트 hack이므로 service helper로 노출하지 말 것 — production 경로는 항상 정책을 거쳐야 한다. e2e도 같은 psql 패턴 (가이드 단계 8 참조).
 
 ### 마이그레이션 — autogenerate의 사각지대
 

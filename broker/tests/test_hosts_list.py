@@ -55,7 +55,15 @@ async def test_hosts_admin_same_payload(auth_client: AuthClientFactory, host: in
     rows = [row for row in body if row["id"] == host]
     assert len(rows) == 1
     keys = set(rows[0].keys())
-    assert keys == {"id", "hostname", "display_name", "location", "status", "sunshine_port"}
+    assert keys == {
+        "id",
+        "hostname",
+        "display_name",
+        "location",
+        "status",
+        "sunshine_port",
+        "ip_address",
+    }
 
 
 @pytest.mark.asyncio

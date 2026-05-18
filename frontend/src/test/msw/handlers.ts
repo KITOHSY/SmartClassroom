@@ -1,6 +1,7 @@
 import { http, HttpResponse } from 'msw';
 import type { User } from '@/lib/auth';
-import type { HostRead } from '@/api/hosts';
+import type { ConnectTokenResponse } from '@/api/connect';
+import type { HostAvailable, HostRead } from '@/api/hosts';
 import type { CalendarMatrix, Reservation } from '@/api/reservations';
 
 /**
@@ -38,6 +39,7 @@ export const TEST_HOSTS: HostRead[] = [
     location: '공대 1호관 101호',
     status: 'ACTIVE',
     sunshine_port: 47989,
+    ip_address: '10.0.0.101',
   },
   {
     id: 2,
@@ -46,6 +48,29 @@ export const TEST_HOSTS: HostRead[] = [
     location: '공대 1호관 102호',
     status: 'ACTIVE',
     sunshine_port: 47989,
+    ip_address: '10.0.0.102',
+  },
+];
+
+/** GET /hosts/available 모킹 — 1번은 ip 있음, 2번은 ip 미등록(버튼 비활성 시나리오). */
+export const TEST_AVAILABLE_HOSTS: HostAvailable[] = [
+  {
+    id: 1,
+    hostname: 'pc-101',
+    display_name: '강의실 A-101',
+    location: '공대 1호관 101호',
+    last_heartbeat_at: '2026-05-18T00:00:00+00:00',
+    ip_address: '10.0.0.101',
+    available_until: '2026-05-18T03:00:00+00:00',
+  },
+  {
+    id: 2,
+    hostname: 'pc-102',
+    display_name: '강의실 A-102',
+    location: '공대 1호관 102호',
+    last_heartbeat_at: '2026-05-18T00:00:00+00:00',
+    ip_address: null,
+    available_until: '2026-05-18T03:00:00+00:00',
   },
 ];
 
@@ -106,6 +131,23 @@ export function buildReservation(overrides: Partial<Reservation> = {}): Reservat
   };
 }
 
+export function buildConnectTokenResponse(
+  overrides: Partial<ConnectTokenResponse> = {},
+): ConnectTokenResponse {
+  return {
+    token: 'mock-connect-token-0123456789abcdef0123456789abcdef',
+    expires_at: '2026-05-18T03:00:00+00:00',
+    reservation_id: 100,
+    host: {
+      id: 1,
+      hostname: 'pc-101',
+      ip_address: '10.0.0.101',
+      sunshine_port: 47989,
+    },
+    ...overrides,
+  };
+}
+
 export const handlers = [
   // GET /api/v1/auth/me — 세션 상태에 따라 200 user 또는 401.
   http.get('/api/v1/auth/me', () => {
@@ -162,6 +204,11 @@ export const handlers = [
     return HttpResponse.json(TEST_HOSTS, { status: 200 });
   }),
 
+  // GET /api/v1/hosts/available — 200 + IDLE 호스트 목록 (T17).
+  http.get('/api/v1/hosts/available', () => {
+    return HttpResponse.json(TEST_AVAILABLE_HOSTS, { status: 200 });
+  }),
+
   // GET /api/v1/reservations/calendar — 200 + 슬롯 매트릭스.
   http.get('/api/v1/reservations/calendar', () => {
     return HttpResponse.json(buildCalendarMatrix(), { status: 200 });
@@ -193,6 +240,30 @@ export const handlers = [
   // DELETE /api/v1/reservations/:id — 204.
   http.delete('/api/v1/reservations/:id', () => {
     return new HttpResponse(null, { status: 204 });
+  }),
+
+  // POST /api/v1/reservations/:id/connect — 201 + connect 토큰 (T17 Section A).
+  http.post('/api/v1/reservations/:id/connect', ({ params }) => {
+    return HttpResponse.json(
+      buildConnectTokenResponse({ reservation_id: Number(params.id) }),
+      { status: 201 },
+    );
+  }),
+
+  // POST /api/v1/reservations/instant — 201 + 예약 생성 + connect 토큰 (T17 Section B).
+  http.post('/api/v1/reservations/instant', async ({ request }) => {
+    const body = (await request.json()) as { host_id: number };
+    return HttpResponse.json(
+      buildConnectTokenResponse({
+        host: {
+          id: body.host_id,
+          hostname: `pc-${body.host_id}`,
+          ip_address: '10.0.0.101',
+          sunshine_port: 47989,
+        },
+      }),
+      { status: 201 },
+    );
   }),
 ];
 
@@ -260,5 +331,58 @@ export const reservationValidationErrorHandler = http.post('/api/v1/reservations
       },
     },
     { status: 422 },
+  ),
+);
+
+/**
+ * T17 — connect 윈도우 422 / 즉시 사용 409 시나리오. `server.use(...)`로 덮어쓴다.
+ */
+export const connectTooEarlyHandler = http.post('/api/v1/reservations/:id/connect', () =>
+  HttpResponse.json(
+    {
+      error: 'invalid_connect_window',
+      message: '접속 가능 시간이 아닙니다',
+      request_id: 'req-test-cw1',
+      detail: { reason: 'too_early' },
+    },
+    { status: 422 },
+  ),
+);
+
+export const connectExpiredHandler = http.post('/api/v1/reservations/:id/connect', () =>
+  HttpResponse.json(
+    {
+      error: 'invalid_connect_window',
+      message: '접속 가능 시간이 아닙니다',
+      request_id: 'req-test-cw2',
+      detail: { reason: 'expired_window' },
+    },
+    { status: 422 },
+  ),
+);
+
+export const instantHostNotAvailableHandler = http.post(
+  '/api/v1/reservations/instant',
+  () =>
+    HttpResponse.json(
+      {
+        error: 'host_not_available',
+        message: '이 PC는 지금 즉시 사용할 수 없어요',
+        request_id: 'req-test-hna',
+        detail: { host_id: 1 },
+      },
+      { status: 409 },
+    ),
+);
+
+export const instantConflictHandler = http.post('/api/v1/reservations/instant', () =>
+  HttpResponse.json(
+    {
+      error: 'reservation_conflict',
+      message: '이미 사용 중인 PC입니다',
+      request_id: 'req-test-ic',
+      detail: { constraint: 'reservations_no_overlap' },
+    },
+    { status: 409 },
   ),
 );

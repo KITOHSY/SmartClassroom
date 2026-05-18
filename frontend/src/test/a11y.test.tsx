@@ -21,6 +21,7 @@ const HOST: HostRead = {
   location: null,
   status: 'ACTIVE',
   sunshine_port: 47989,
+  ip_address: '10.0.0.1',
 };
 
 function makeSlots(): Map<number, CalendarSlot[]> {

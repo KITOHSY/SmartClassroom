@@ -8,8 +8,11 @@ import {
   type ReservationStatus,
 } from '@/api/reservations';
 import { listHosts, type HostRead } from '@/api/hosts';
+import { issueConnectToken } from '@/api/connect';
+import { MoonlightInstallGuide } from '@/components/MoonlightInstallGuide';
 import { ReservationModal } from '@/components/ReservationModal';
 import { useToast } from '@/components/Toast';
+import { useMoonlightConnect } from '@/hooks/useMoonlightConnect';
 import { useMe } from '@/lib/auth';
 import { formatDateTimeLabel } from '@/lib/time';
 import { parseApiError } from '@/lib/errors';
@@ -26,6 +29,13 @@ const STATUS_BADGE: Record<ReservationStatus, string> = {
   COMPLETED: 'bg-emerald-100 text-emerald-800',
 };
 
+// 백엔드 invalid_connect_window의 detail.reason → 사용자 친화 메시지.
+const CONNECT_WINDOW_MESSAGE: Record<string, string> = {
+  too_early: '예약 시작 직전부터 접속할 수 있어요',
+  expired_window: '예약 시간이 종료되어 접속할 수 없어요',
+  reservation_not_active: '예약 상태를 확인해 주세요',
+};
+
 interface ReschedulingState {
   host: HostRead;
   startsAt: string;
@@ -35,7 +45,9 @@ export function MyReservationsPage(): ReactElement {
   const queryClient = useQueryClient();
   const toast = useToast();
   const { data: me } = useMe();
+  const { launch, guideOpen, closeGuide } = useMoonlightConnect();
   const [pendingCancelId, setPendingCancelId] = useState<number | null>(null);
+  const [pendingConnectId, setPendingConnectId] = useState<number | null>(null);
   const [rescheduling, setRescheduling] = useState<ReschedulingState | null>(null);
 
   // admin은 user_id 미필터 시 전체 반환 — "내 예약" 화면이라 본인 user_id로 명시 강제.
@@ -83,6 +95,28 @@ export function MyReservationsPage(): ReactElement {
     },
     onSettled: () => setPendingCancelId(null),
   });
+
+  const connectMutation = useMutation({
+    mutationFn: (id: number) => issueConnectToken(id, 'connect_page'),
+    onSuccess: async (data) => {
+      await launch(data);
+    },
+    onError: (err) => {
+      const parsed = parseApiError(err);
+      const reason = typeof parsed.detail?.reason === 'string' ? parsed.detail.reason : '';
+      const message =
+        parsed.code === 'invalid_connect_window'
+          ? (CONNECT_WINDOW_MESSAGE[reason] ?? parsed.message)
+          : parsed.message;
+      toast.push({ variant: 'error', message });
+    },
+    onSettled: () => setPendingConnectId(null),
+  });
+
+  const onConnect = (reservation: Reservation): void => {
+    setPendingConnectId(reservation.id);
+    connectMutation.mutate(reservation.id);
+  };
 
   const onCancel = (reservation: Reservation): void => {
     if (reservation.status !== 'CONFIRMED') return;
@@ -151,6 +185,9 @@ export function MyReservationsPage(): ReactElement {
           {sorted.map((r) => {
             const host = hostsById.get(r.host_id);
             const isCanceling = pendingCancelId === r.id;
+            const connectable =
+              r.status === 'CONFIRMED' && new Date(r.ends_at).getTime() > Date.now();
+            const noIp = !host || host.ip_address === null;
             return (
               <li
                 key={r.id}
@@ -173,10 +210,25 @@ export function MyReservationsPage(): ReactElement {
                   <p className="text-sm text-slate-600">
                     {formatDateTimeLabel(r.starts_at)} ~ {formatDateTimeLabel(r.ends_at)}
                   </p>
+                  {connectable && noIp ? (
+                    <p className="text-xs text-amber-700">
+                      접속 정보가 등록되지 않아 접속할 수 없어요.
+                    </p>
+                  ) : null}
                 </div>
                 <div className="flex gap-2">
                   {r.status === 'CONFIRMED' ? (
                     <>
+                      {connectable ? (
+                        <button
+                          type="button"
+                          onClick={() => onConnect(r)}
+                          disabled={noIp || pendingConnectId === r.id}
+                          className="rounded bg-brand px-3 py-1 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
+                        >
+                          {pendingConnectId === r.id ? '연결 중…' : '접속'}
+                        </button>
+                      ) : null}
                       <button
                         type="button"
                         onClick={() => void onReschedule(r)}
@@ -213,6 +265,8 @@ export function MyReservationsPage(): ReactElement {
           }}
         />
       ) : null}
+
+      <MoonlightInstallGuide open={guideOpen} onClose={closeGuide} />
     </section>
   );
 }

@@ -22,6 +22,7 @@ from broker.app.api.schemas.host import HostAvailable, HostCreate, HostRead, Hos
 from broker.app.core.errors import InvalidReservationWindowError
 from broker.app.domain.host import Host
 from broker.app.domain.user import User
+from broker.app.services import reservation as reservation_service
 from broker.app.services.agent_token_service import issue_agent_token
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select, text
@@ -78,11 +79,12 @@ async def list_available_hosts_endpoint(
     from_: datetime | None = Query(default=None, alias="from"),
     to: datetime | None = Query(default=None),
 ) -> list[HostAvailable]:
-    """T06 — '접속 가능' 호스트 목록(`status='IDLE'`).
+    """T06/T17 — '접속 가능' 호스트 목록(`status='IDLE'`).
 
+    파라미터 없이 호출하면(T17 바로 접속) 현재 예약이 없는 IDLE 호스트와 각 호스트의
+    `available_until`(지금부터 즉시 사용 가능한 종료 시각 = min(다음 예약, 2.5h))을 반환.
     옵션 `?from=&to=` (반열림 `[from, to)`, 30분 그리드)이 함께 오면 해당 슬롯에
-    활성 CONFIRMED 예약이 있는 호스트는 제외 — T17 가용 PC 화면이 미리 활용.
-    둘 중 하나만 오면 422 (의미 모호).
+    활성 CONFIRMED 예약이 있는 호스트만 제외하는 슬롯 모드. 둘 중 하나만 오면 422.
     """
     if (from_ is None) != (to is None):
         raise InvalidReservationWindowError(
@@ -90,25 +92,41 @@ async def list_available_hosts_endpoint(
             detail={"from": from_, "to": to},
         )
 
-    stmt = select(Host).where(Host.status == "IDLE")
-
     if from_ is not None and to is not None:
+        # 슬롯 모드 — [from, to)에 활성 CONFIRMED 예약이 없는 IDLE 호스트.
         _ensure_grid_aligned(from_)
         _ensure_grid_aligned(to)
         if from_ >= to:
             raise InvalidReservationWindowError("from_은 to보다 이전이어야 합니다")
-        stmt = stmt.where(
-            text(
-                "NOT EXISTS (SELECT 1 FROM reservations r "
-                "WHERE r.host_id = hosts.id AND r.status='CONFIRMED' "
-                "AND r.time_range && tstzrange(:from_, :to_, '[)'))"
-            ).bindparams(from_=from_, to_=to)
+        stmt = (
+            select(Host)
+            .where(
+                Host.status == "IDLE",
+                text(
+                    "NOT EXISTS (SELECT 1 FROM reservations r "
+                    "WHERE r.host_id = hosts.id AND r.status='CONFIRMED' "
+                    "AND r.time_range && tstzrange(:from_, :to_, '[)'))"
+                ).bindparams(from_=from_, to_=to),
+            )
+            .order_by(Host.id)
         )
+        result = await db.execute(stmt)
+        return [HostAvailable.model_validate(h) for h in result.scalars().all()]
 
-    stmt = stmt.order_by(Host.id)
-    result = await db.execute(stmt)
-    hosts = result.scalars().all()
-    return [HostAvailable.model_validate(h) for h in hosts]
+    # 파라미터 없음 — T17 바로 접속(현재 예약 없는 IDLE 호스트 + available_until).
+    rows = await reservation_service.list_instant_available_hosts(db)
+    return [
+        HostAvailable(
+            id=host.id,
+            hostname=host.hostname,
+            display_name=host.display_name,
+            location=host.location,
+            last_heartbeat_at=host.last_heartbeat_at,
+            ip_address=host.ip_address,
+            available_until=available_until,
+        )
+        for host, available_until in rows
+    ]
 
 
 @router.post(

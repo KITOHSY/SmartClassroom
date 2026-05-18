@@ -33,6 +33,22 @@ class HostConnectionInfo(BaseModel):
         return str(value)
 
 
+class ConnectTokenRequest(BaseModel):
+    """POST /reservations/{id}/connect 선택적 본문 — KPI 측정용 client 식별자.
+
+    body 없이 호출하면 기존 동작 그대로(audit `token_issue` detail에 client 키 미추가).
+    T17이 PRD KPI "사용자 입력 0개" 집계를 위해 호출 출처를 심는다.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    client: str | None = Field(
+        default=None,
+        max_length=32,
+        description="호출 출처 — 'connect_page'(예약 카드 접속). KPI 집계용.",
+    )
+
+
 class ConnectTokenResponse(BaseModel):
     token: str = Field(..., description="raw url-safe 토큰 — 발급 응답에만 노출")
     expires_at: datetime = Field(..., description="토큰 만료 = reservation.ends_at")

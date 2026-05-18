@@ -95,6 +95,14 @@ broker/tests/        # pytest + pytest-asyncio + testcontainers + asgi-lifespan
 
 `status='CANCELED'`는 predicate 밖이라 같은 슬롯 재예약이 가능하다 (soft delete + EXCLUDE 자동 우회). 그 외 의미로 `status`를 "감춤" 용도로 바꾸려 한다면 EXCLUDE 영향을 먼저 따져볼 것.
 
+### 즉시 사용 예약은 `_validate_window`만 우회 (T17)
+
+`create_instant_reservation` (`services/reservation.py`)은 `create_reservation`과 같은 raw `INSERT ... tstzrange(:s, :e, '[)') RETURNING id` 패턴이지만 **`_validate_window`(30분 그리드 / 과거 시각 / lookahead)를 호출하지 않는다** — 윈도우를 서버가 산정하므로 그리드 검증이 무의미. 단 **`_validate_quota`(동시 5건 / 일 8시간)는 그대로 호출**한다. 우회 대상은 그리드 제약 하나뿐 — reservation 검증 로직을 "통합" 리팩터링할 때 즉시 사용 경로에 그리드 검사를 다시 끼우지 말 것.
+
+`_instant_window(now, next_reservation_at)`: `starts_at=now`(초 절삭, 비그리드), `ends_at = floor_30min(now + INSTANT_USE_DURATION) + 30min`을 그 호스트의 다음 CONFIRMED 예약 시작(`_next_reservation_start`, raw SQL `min(lower(time_range))`)으로 cap. 반열림 `[)`이라 `ends_at == next_start` 경계는 EXCLUDE가 겹침으로 안 본다. IDLE 아닌 호스트는 도메인 예외 `HostNotAvailableError` → 라우터가 409 `host_not_available` dict-detail로 변환.
+
+`POST /reservations/instant`는 예약 생성 + connect 토큰 발급 + audit을 **한 응답**(`ConnectTokenResponse`)으로 반환 — 진짜 원클릭(1 API 콜). 토큰 발급+audit 조립 블록은 `connect_token_endpoint`와 공용 헬퍼(`_issue_connect_token_response`)로 공유하므로 한쪽만 고치지 말 것.
+
 ### 도메인 예외 → HTTP 핸들러 패턴
 
 서비스는 순수 Python 예외를 raise한다. `core/errors.py`의 `ReservationConflictError` / `ReservationQuotaError` / `InvalidReservationWindowError` / `InvalidConnectWindowError`, `services/reservation.py`의 `NotOwnerError` / `ReservationNotFoundError` / `HostNotFoundError`. `register_error_handlers`가 앞쪽 4종을 409/429/422/422로 **전역 매핑**한다. `NotOwnerError` / `ReservationNotFoundError`는 라우터에서 **404로 변환**한다 — 존재 노출 방지가 목적이므로 403 금지.
@@ -198,6 +206,8 @@ T07 `POST /tokens/verify`처럼 **외부 사용자가 아닌 내부 컴포넌트
 
 - **`GET /api/v1/auth/me` 응답에 내부 PK `id`** (`api/v1/auth.py::me`) — 프런트가 admin "내 예약" 화면에서 `?user_id=me.id`로 본인 예약만 필터하기 위함 (`frontend/src/pages/MyReservationsPage.tsx`). 빠지면 admin이 전체 사용자의 예약을 보는 노출 버그 (2026-05-12 e2e 발견). 회귀 assert는 `broker/tests/test_auth_mock_flow.py`. 내부 PK 노출이지만 본인 ID 한정이라 보안 영향 미미.
 - **캘린더 시간 범위는 반열림 `[from, to)` + 30분 그리드** — 백엔드 `_ensure_grid` (`services/reservation.py`)는 `:00`/`:30`만 허용해 `23:59:59`는 422. 프런트 `kstEndOfDay` (`frontend/src/lib/time.ts`)가 다음날 00:00 KST를 반환해 같은 날 마지막 23:30 슬롯을 포함하면서 422를 회피한다. 새 range 입력을 추가할 때도 시계열 helper에서 그리드 정렬을 보장하고 라우트가 `_ensure_grid`로 한 번 더 방어하는 이중 패턴을 유지할 것.
+- **`moonlight://connect?token=&host-id=&host=&port=` URL 스키마는 T13 fork와의 선계약** — `frontend/src/lib/moonlight.ts::buildMoonlightUrl`이 조립하고, T13(moonlight-qt fork)의 커스텀 URL 핸들러 `--connect-token`/`--host-id` 인자에 대응한다. T13 머지 전까지 이 스키마가 프런트↔클라이언트의 유일한 계약 — 파라미터 키를 바꾸면 양쪽을 같이 고쳐야 한다. `launchMoonlight`의 핸들러 등록 여부 판정은 `visibilitychange`/`blur` + 1.8s 타이머 **휴리스틱**(브라우저에 동기 확인 API 부재) — `false`라도 실제로는 실행됐을 수 있다.
+- **`GET /hosts/available`은 파라미터 유무로 듀얼 모드** — `from`/`to` 쿼리가 있으면 슬롯 가용 필터(원래 동작), 없으면 T17 바로 접속 모드(`list_instant_available_hosts` — `status='IDLE'`이고 now를 덮는 활성 예약이 없는 호스트 + 호스트별 `available_until`). 한 라우트가 분기하므로 새 쿼리 파라미터를 더할 때 두 모드 모두 영향을 따질 것.
 
 ### 테스트는 testcontainers에 의존
 

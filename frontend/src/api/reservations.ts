@@ -1,4 +1,5 @@
 import { apiClient } from '@/api/client';
+import type { ConnectTokenResponse } from '@/api/connect';
 
 export type ReservationStatus = 'CONFIRMED' | 'CANCELED' | 'COMPLETED';
 
@@ -61,6 +62,17 @@ export async function createReservation(payload: CreateReservationPayload): Prom
 
 export async function cancelReservation(id: number): Promise<void> {
   await apiClient.delete(`/reservations/${id}`);
+}
+
+/**
+ * 즉시 사용 — 지금부터 산정된 윈도우로 예약 생성 + connect 토큰을 한 응답으로 받는다 (T17).
+ * 시각은 서버가 산정하므로 클라이언트는 host_id만 보낸다.
+ */
+export async function createInstantReservation(hostId: number): Promise<ConnectTokenResponse> {
+  const { data } = await apiClient.post<ConnectTokenResponse>('/reservations/instant', {
+    host_id: hostId,
+  });
+  return data;
 }
 
 export interface ListReservationsFilters {

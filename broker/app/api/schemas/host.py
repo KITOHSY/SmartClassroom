@@ -28,10 +28,12 @@ class HostRead(BaseModel):
     location: str | None = None
     status: str
     sunshine_port: int
+    ip_address: str | None = None
 
-    @field_validator("location", mode="before")
+    @field_validator("location", "ip_address", mode="before")
     @classmethod
-    def _normalize_location(cls, value: Any) -> str | None:
+    def _normalize_optional_str(cls, value: Any) -> str | None:
+        # asyncpg는 INET을 ipaddress 객체로, location은 str로 돌려준다 — 일괄 str화.
         if value is None:
             return None
         return str(value)
@@ -54,7 +56,11 @@ class HostWithAgentToken(HostRead):
 
 
 class HostAvailable(BaseModel):
-    """T06 — `GET /hosts/available` 가용 호스트 응답 (status='IDLE' 만 노출)."""
+    """`GET /hosts/available` 가용 호스트 응답 (status='IDLE' 만 노출).
+
+    `available_until`(T17): 지금부터 이 시각까지 즉시 사용할 수 있다 —
+    min(다음 예약 시작, 즉시 사용 2.5h 윈도우 끝). from/to 슬롯 모드에서는 None.
+    """
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -63,3 +69,12 @@ class HostAvailable(BaseModel):
     display_name: str
     location: str | None = None
     last_heartbeat_at: datetime | None = None
+    ip_address: str | None = None
+    available_until: datetime | None = None
+
+    @field_validator("location", "ip_address", mode="before")
+    @classmethod
+    def _normalize_optional_str(cls, value: Any) -> str | None:
+        if value is None:
+            return None
+        return str(value)

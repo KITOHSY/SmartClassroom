@@ -49,6 +49,18 @@ class ReservationCreate(BaseModel):
         return self
 
 
+class InstantReservationRequest(BaseModel):
+    """POST /reservations/instant 요청 — 즉시 사용.
+
+    시각(starts_at/ends_at)은 서버가 산정한다 — `starts_at=now`, `ends_at`은
+    (now + 2.5h)가 속한 30분 슬롯의 끝. 30분 그리드 시작 제약은 의도적으로 우회한다.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    host_id: int = Field(..., gt=0, description="즉시 사용할 호스트 PK")
+
+
 ReservationStatus = Literal["CONFIRMED", "CANCELED", "COMPLETED"]
 
 

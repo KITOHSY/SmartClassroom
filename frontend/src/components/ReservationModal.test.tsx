@@ -21,6 +21,7 @@ const HOST: HostRead = {
   location: null,
   status: 'ACTIVE',
   sunshine_port: 47989,
+  ip_address: '10.0.0.1',
 };
 
 const STARTS_AT = '2026-05-13T00:00:00.000Z'; // KST 09:00

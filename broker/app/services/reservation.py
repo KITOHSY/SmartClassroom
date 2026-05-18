@@ -36,6 +36,9 @@ RESERVATION_OVERLAP_CONSTRAINT: Final[str] = "reservations_no_overlap"
 
 ACTIVE_RESERVATION_STATUSES: Final[tuple[str, ...]] = ("CONFIRMED", "COMPLETED")
 
+# T17 즉시 사용 — starts_at=now ~ (now + 이 길이)가 속한 30분 슬롯 끝까지.
+INSTANT_USE_DURATION: Final[timedelta] = timedelta(hours=2, minutes=30)
+
 
 class NotOwnerError(Exception):
     """본인 예약이 아니거나 admin이 아닌 경우. router가 404로 변환(존재 노출 방지)."""
@@ -47,6 +50,10 @@ class ReservationNotFoundError(Exception):
 
 class HostNotFoundError(Exception):
     """대상 호스트가 없음. router가 422로 변환(window invalid의 일종)."""
+
+
+class HostNotAvailableError(Exception):
+    """T17 즉시 사용 — 호스트가 IDLE 상태가 아님. router가 409로 변환."""
 
 
 # ---------------------------------------------------------------------------
@@ -251,6 +258,145 @@ async def create_reservation(
         },
     )
     return reservation
+
+
+def _instant_window(
+    now: datetime, next_reservation_at: datetime | None = None
+) -> tuple[datetime, datetime]:
+    """T17 즉시 사용 윈도우 산정.
+
+    - starts_at = now (초 단위 절삭, 30분 그리드 미정렬 — 의도된 우회)
+    - ends_at = (now + INSTANT_USE_DURATION)가 속한 30분 슬롯의 끝.
+      단 `next_reservation_at`(그 호스트의 다음 예약 시작)이 더 이르면 거기서 자른다 —
+      반열림 `[)`이라 경계가 맞닿아도 EXCLUDE는 겹침으로 보지 않는다.
+
+    예: now=14:37 → now+2.5h=17:07 → 슬롯 [17:00,17:30) → ends_at=17:30.
+        단 다음 예약이 15:00이면 ends_at=15:00.
+    """
+    starts_at = now.replace(microsecond=0)
+    target = now + INSTANT_USE_DURATION
+    floored = target.replace(minute=(target.minute // 30) * 30, second=0, microsecond=0)
+    ends_at = floored + timedelta(minutes=30)
+    if next_reservation_at is not None and next_reservation_at < ends_at:
+        ends_at = next_reservation_at
+    return starts_at, ends_at
+
+
+async def _next_reservation_start(
+    db: AsyncSession, host_id: int, *, after: datetime
+) -> datetime | None:
+    """host의 다음 CONFIRMED 예약 시작 시각(after 이후 가장 이른 것). 없으면 None.
+
+    `:name::type` 캐스트 충돌 회피로 raw SQL — Postgres가 timestamptz를 추론한다.
+    """
+    raw = await db.scalar(
+        text(
+            "SELECT min(lower(time_range)) FROM reservations "
+            "WHERE host_id = :hid AND status = 'CONFIRMED' "
+            "AND lower(time_range) > :after"
+        ).bindparams(hid=host_id, after=after)
+    )
+    if raw is None:
+        return None
+    value: datetime = raw
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=UTC)
+    return value
+
+
+async def create_instant_reservation(db: AsyncSession, user: User, *, host_id: int) -> Reservation:
+    """T17 즉시 사용 예약 생성 — 시각은 서버가 산정한다.
+
+    create_reservation과 달리 `_validate_window`(30분 그리드/과거 시각/lookahead)를
+    건너뛴다 — 윈도우가 서버 산정이라 검증 불필요. quota(`_validate_quota`)는 그대로
+    적용한다(우회 대상은 그리드 제약뿐). 호스트가 IDLE이 아니면 HostNotAvailableError,
+    슬롯 충돌은 EXCLUDE GIST → ReservationConflictError.
+    """
+    now = _now()
+    host = await _validate_host_exists(db, host_id)
+    if host.status != "IDLE":
+        raise HostNotAvailableError(
+            f"host_id={host_id} 는 IDLE 상태가 아닙니다 (status={host.status})"
+        )
+    # 다음 예약 시작 전까지로 윈도우를 자른다 — 그 호스트의 임박한 예약과 겹치지 않게.
+    next_start = await _next_reservation_start(db, host_id, after=now)
+    starts_at, ends_at = _instant_window(now, next_start)
+    await _validate_quota(db, user=user, starts_at=starts_at, ends_at=ends_at)
+
+    # create_reservation과 동일 — TSTZRANGE raw INSERT + RETURNING id.
+    try:
+        result = await db.execute(
+            text(
+                "INSERT INTO reservations (user_id, host_id, time_range, status) "
+                "VALUES (:uid, :hid, tstzrange(:s, :e, '[)'), 'CONFIRMED') "
+                "RETURNING id"
+            ).bindparams(uid=user.id, hid=host_id, s=starts_at, e=ends_at)
+        )
+        new_id = result.scalar_one()
+    except IntegrityError as exc:
+        await db.rollback()
+        if _is_overlap_violation(exc):
+            raise ReservationConflictError() from exc
+        raise
+
+    reservation = await db.get(Reservation, new_id)
+    if reservation is None:
+        raise RuntimeError(f"INSERT RETURNING 직후 Reservation(id={new_id}) 조회 실패")
+
+    await write_audit(
+        db,
+        action="reservation_create",
+        actor_user_id=user.id,
+        actor_kind="user",
+        target_kind="reservation",
+        target_id=reservation.id,
+        auth_provider=user.provider,
+        detail={
+            "host_id": host_id,
+            "starts_at": starts_at.isoformat(),
+            "ends_at": ends_at.isoformat(),
+            "instant": True,
+        },
+    )
+    return reservation
+
+
+async def list_instant_available_hosts(db: AsyncSession) -> list[tuple[Host, datetime]]:
+    """T17 바로 접속 — 지금 즉시 사용 가능한 호스트 + 각 호스트의 available_until.
+
+    조건: status='IDLE' AND 현재 시각을 덮는 활성 예약 없음(status lag 방어).
+    available_until = min(다음 CONFIRMED 예약 시작, 즉시 사용 2.5h 윈도우 끝).
+    """
+    now = _now()
+    rows = (
+        await db.execute(
+            text(
+                "SELECT h.id, "
+                "  (SELECT min(lower(r.time_range)) FROM reservations r "
+                "   WHERE r.host_id = h.id AND r.status = 'CONFIRMED' "
+                "   AND lower(r.time_range) > :now) AS next_start "
+                "FROM hosts h "
+                "WHERE h.status = 'IDLE' "
+                "  AND NOT EXISTS (SELECT 1 FROM reservations r2 "
+                "    WHERE r2.host_id = h.id "
+                "    AND r2.status IN ('CONFIRMED', 'COMPLETED') "
+                "    AND r2.time_range @> :now) "
+                "ORDER BY h.id"
+            ).bindparams(now=now)
+        )
+    ).all()
+
+    result: list[tuple[Host, datetime]] = []
+    for host_id, next_start in rows:
+        host = await db.get(Host, host_id)
+        if host is None:
+            continue
+        next_at: datetime | None = next_start
+        if next_at is not None and next_at.tzinfo is None:
+            next_at = next_at.replace(tzinfo=UTC)
+        _, available_until = _instant_window(now, next_at)
+        result.append((host, available_until))
+    return result
 
 
 async def cancel_reservation(db: AsyncSession, user: User, reservation_id: int) -> Reservation:

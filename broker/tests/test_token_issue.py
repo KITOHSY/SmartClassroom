@@ -202,3 +202,34 @@ async def test_issue_admin_can_issue_for_any_user(
     body = r.json()
     assert body["reservation_id"] == rid
     assert "token" in body
+
+
+@pytest.mark.asyncio
+async def test_issue_with_client_body_records_audit(
+    auth_client: AuthClientFactory, host: int
+) -> None:
+    """connect 호출에 {client} body를 실으면 token_issue audit detail에 적재된다 (T17 KPI hook).
+
+    body 없는 호출(다른 테스트가 회귀 보장)은 동작 무변경.
+    """
+    ac = await auth_client()
+    starts, ends = _near_future_slot(5)
+    rid = await _create_reservation(ac, host, starts, ends)
+
+    r = await ac.post(f"/api/v1/reservations/{rid}/connect", json={"client": "connect_page"})
+    assert r.status_code == 201, r.text
+
+    from broker.app.domain.audit import AuditLog
+    from broker.app.infra.db import get_session_factory
+    from sqlalchemy import select
+
+    factory = get_session_factory()
+    async with factory() as session:
+        token_audits = (
+            (await session.execute(select(AuditLog).where(AuditLog.action == "token_issue")))
+            .scalars()
+            .all()
+        )
+    ti = next((a for a in token_audits if a.detail.get("reservation_id") == rid), None)
+    assert ti is not None
+    assert ti.detail.get("client") == "connect_page"

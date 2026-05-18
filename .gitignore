@@ -38,6 +38,10 @@ artifacts/
 openapi.json
 broker/alembic/versions/__pycache__/
 
+# Playwright MCP / e2e 데모 산출물
+.playwright-mcp/
+e2e-*.png
+
 # Docker
 *.pid
 

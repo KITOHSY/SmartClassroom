@@ -11,16 +11,18 @@ const HOSTS: HostRead[] = [
     hostname: 'pc-101',
     display_name: '강의실 A-101',
     location: null,
-    status: 'ACTIVE',
+    status: 'IDLE',
     sunshine_port: 47989,
+    ip_address: '10.0.0.1',
   },
   {
     id: 2,
     hostname: 'pc-102',
     display_name: '강의실 A-102',
     location: null,
-    status: 'ACTIVE',
+    status: 'IN_USE',
     sunshine_port: 47989,
+    ip_address: '10.0.0.2',
   },
 ];
 
@@ -120,6 +122,19 @@ describe('<CalendarGrid />', () => {
     await user.keyboard('{Enter}');
     expect(onActivate).toHaveBeenCalledTimes(1);
     expect(onActivate.mock.calls[0]?.[0].host.id).toBe(1);
+  });
+
+  it('호스트 행 헤더에 status 배지가 표시된다', () => {
+    render(
+      <CalendarGrid
+        hosts={HOSTS}
+        slotsByHost={buildSlotsByHost()}
+        currentUserId={1}
+        onCellActivate={() => undefined}
+      />,
+    );
+    expect(screen.getByText('대기 중')).toBeInTheDocument();
+    expect(screen.getByText('사용 중')).toBeInTheDocument();
   });
 
   it('OCCUPIED(타인) 셀은 disabled — 클릭해도 콜백 미호출', async () => {

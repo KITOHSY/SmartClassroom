@@ -1,6 +1,7 @@
 import { useMemo, type ReactElement } from 'react';
 import clsx from 'clsx';
 import { useRovingTabIndex } from '@/hooks/useRovingTabIndex';
+import { HostStatusBadge } from '@/components/HostStatusBadge';
 import type { CalendarSlot } from '@/api/reservations';
 import type { HostRead } from '@/api/hosts';
 import { formatSlotLabel } from '@/lib/time';
@@ -148,12 +149,15 @@ function Row({
         role="rowheader"
         aria-rowindex={rowIndex + 2}
         aria-colindex={1}
-        className="sticky left-0 z-10 flex items-center justify-between border-b border-r border-slate-200 bg-white px-2 text-slate-700"
+        className="sticky left-0 z-10 flex flex-col justify-center gap-0.5 border-b border-r border-slate-200 bg-white px-2 text-slate-700"
       >
-        <span className="truncate font-medium" title={host.display_name}>
+        <span className="truncate font-medium leading-tight" title={host.display_name}>
           {host.display_name}
         </span>
-        <span className="text-[10px] text-slate-400">{host.hostname}</span>
+        <span className="flex items-center gap-1.5 text-[10px] leading-tight">
+          <HostStatusBadge status={host.status} />
+          <span className="truncate text-slate-400">{host.hostname}</span>
+        </span>
       </div>
       {slots.map((slot, c) => {
         const isMine = slot.user_id !== null && slot.user_id === currentUserId;

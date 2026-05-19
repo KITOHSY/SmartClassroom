@@ -216,7 +216,7 @@
 ### T10. Sunshine 인증 확장 (Token + 자동 PIN 모드)
 - 카테고리: 기타 (Host)
 - 의존성: 없음
-- 상태: **구현 완료 / 빌드 재검증 대기 (2026-05-19)** — Sunshine 포크(`D:/Hongsun/Sunshine`, `KITOHSY/Sunshine`)에 코드 변경 + 패치 시리즈 export 완료. `src/` 4파일 +50줄/−1줄(`config.h`/`config.cpp` `broker_api_token` 키, `confighttp.cpp` `authenticate()` Bearer 경로 + 상수시간 비교 헬퍼, `input.cpp` toolchain 호환 가드). 패치 브랜치 `smartclassroom/t10-token-pin`(태그 `v2025.628.4510` 기준), `git format-patch` 4건 → `host-patches/sunshine/`. MSYS2 UCRT64 빌드 시도 중 컴파일 에러 2건 발견·수정 — ⓐ `config.cpp`의 `sunshine_t` aggregate initializer가 패치 0001의 신규 멤버 슬롯을 누락(0001 결함, 패치 0003으로 보정), ⓑ `input.cpp`의 MinGW `HSYNTHETICPOINTERDEVICE` 수동 선언이 최신 UCRT64 `winuser.h`와 중복(toolchain 호환, 패치 0004). 재빌드·런타임 curl 검증은 사용자 환경(`BUILD.md`).
+- 상태: **완료 (2026-05-20)** — Sunshine 포크(`D:/Hongsun/Sunshine`, `KITOHSY/Sunshine`)에 코드 변경 + 패치 시리즈 export 완료. `src/` 4파일 +50줄/−1줄(`config.h`/`config.cpp` `broker_api_token` 키, `confighttp.cpp` `authenticate()` Bearer 경로 + 상수시간 비교 헬퍼, `input.cpp` toolchain 호환 가드). 패치 브랜치 `smartclassroom/t10-token-pin`(태그 `v2025.628.4510` 기준), `git format-patch` 4건 → `host-patches/sunshine/`. **MSYS2 UCRT64 빌드·런타임 검증 완료**: `ninja -C build` 통과, `POST /api/pin` 런타임 curl 3건 통과(정상 토큰→`200`, 잘못된/없는 토큰→`401`). 빌드 중 컴파일 에러 2건 발견·수정 — ⓐ `config.cpp`의 `sunshine_t` aggregate initializer가 패치 0001의 신규 멤버 슬롯을 누락(0001 결함, 패치 0003으로 보정), ⓑ `input.cpp`의 MinGW `HSYNTHETICPOINTERDEVICE` 수동 선언이 최신 UCRT64 `winuser.h`와 중복(toolchain 호환, 패치 0004). 검증 전제(설치본 `SunshineService` 포트 점유 해제, 관리자 자격증명 1회 설정 — `authenticate()`가 Bearer 검사 전 `username` 미설정 시 `/welcome` 리다이렉트)는 `BUILD.md §5`에 기록.
 - 결정 사항 (2026-05-19):
   - **인증 모델 = 정적 호스트별 시크릿 (A안)** — `sunshine.conf`의 신규 키 `broker_api_token`에 Broker가 호스트마다 발급한 정적 시크릿을 두고, 들어온 `Authorization: Bearer <token>`을 상수시간 비교. 네트워크 콜백 없음 → "T10 의존성: 없음"과 일치, Broker 장애와 무관. T11 `agent.yaml` agent 토큰과 같은 프로비저닝 모델(인스톨러 주입). 키 미설정 시 Bearer 경로 비활성 → 기존 Basic Auth 100% 유지. IP-origin 게이트는 Bearer에도 그대로 적용.
   - **예약별 connect 토큰의 동적 검증은 T08 위임** — Sunshine이 받은 토큰을 Broker `POST /tokens/verify`로 되묻는 콜백 방식(B안)은 Broker 의존 + `/tokens/verify` 내부 인증(§11 A6, 현재 `require_admin`) 선결이 필요 → T08(자동 페어링)이 호출자가 될 때 같은 패치 시리즈에 후속 패치로 추가. A·B는 상호 배타 아님.
@@ -226,7 +226,8 @@
   - [x] `src/confighttp.cpp` 의 Basic Auth 외에 Bearer Token 인증 경로 추가
   - [x] Broker 발급 토큰을 검증하는 옵션 (`sunshine.conf` 의 신규 키 `broker_api_token`)
   - [x] PIN 자동 입력 흐름: Bearer 인증으로 `POST /api/pin` 헤드리스 호출 가능 (런타임 curl 검증은 `BUILD.md` §5 — 사용자 빌드 후)
-  - [x] 업스트림 버전 핀(`v2025.628.4510`) 명시 + fork 차이를 패치 시리즈로 관리 — [-] Win/Linux 빌드 검증은 사용자 환경 위임(`BUILD.md`)
+  - [x] 업스트림 버전 핀(`v2025.628.4510`) 명시 + fork 차이를 패치 시리즈로 관리
+  - [x] Windows(MSYS2 UCRT64) 빌드 + 런타임 curl 검증 완료 (2026-05-20). Linux 빌드는 v1 범위 밖(`BUILD.md`).
 - 산출물: Sunshine 포크 패치 브랜치 `smartclassroom/t10-token-pin` (커밋 `590f7c8a` config 키, `96ce0ea7` Bearer 경로, `96f7f757` initializer 보정, `f07470c5` toolchain 가드) + `host-patches/sunshine/`(패치 4건 + `README.md` + `BUILD.md`). 빌드 산출물(Win/Linux)은 사용자 환경.
 
 ### T11. 호스트 상태 보고 에이전트

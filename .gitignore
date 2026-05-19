@@ -47,3 +47,6 @@ e2e-*.png
 
 # uv
 .uv-cache/
+
+# Claude Code — 개인별 로컬 설정 (권한 허용 목록 등). 공유용 settings.json은 추적 유지.
+.claude/settings.local.json

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { ceilToSlot, floorToSlot, toIsoWithOffset } from './time';
+import { ceilToSlot, floorToSlot, formatAvailableWindow, kstWindowEnd, toIsoWithOffset } from './time';
 
 describe('floorToSlot (30분 단위)', () => {
   it('14:14 → 14:00', () => {
@@ -68,5 +68,42 @@ describe('toIsoWithOffset', () => {
     const iso = toIsoWithOffset(input);
     expect(iso).toMatch(/\+09:00$/);
     expect(iso).toContain('2026-05-13T00:00:00');
+  });
+});
+
+describe('kstWindowEnd (2일 윈도우)', () => {
+  it('기본 2일 뒤 KST 00:00을 반환 (반열림 [from, to))', () => {
+    const base = new Date('2026-05-18T05:00:00.000Z'); // KST 2026-05-18 14:00
+    const end = kstWindowEnd(base);
+    // 2026-05-18 00:00 KST + 2일 = 2026-05-20 00:00 KST = 2026-05-19T15:00Z
+    expect(end.toISOString()).toBe('2026-05-19T15:00:00.000Z');
+  });
+
+  it('days 인자로 윈도우 길이를 조정', () => {
+    const base = new Date('2026-05-18T05:00:00.000Z');
+    const end = kstWindowEnd(base, 1);
+    expect(end.toISOString()).toBe('2026-05-18T15:00:00.000Z');
+  });
+});
+
+describe('formatAvailableWindow', () => {
+  it('1시간 미만은 분으로', () => {
+    const until = new Date(Date.now() + 15 * 60_000).toISOString();
+    expect(formatAvailableWindow(until)).toBe('15분');
+  });
+
+  it('정시는 시간만', () => {
+    const until = new Date(Date.now() + 120 * 60_000).toISOString();
+    expect(formatAvailableWindow(until)).toBe('2시간');
+  });
+
+  it('시간 + 분', () => {
+    const until = new Date(Date.now() + 150 * 60_000).toISOString();
+    expect(formatAvailableWindow(until)).toBe('2시간 30분');
+  });
+
+  it('이미 지난 시각은 안내 문구', () => {
+    const until = new Date(Date.now() - 60_000).toISOString();
+    expect(formatAvailableWindow(until)).toBe('곧 다음 예약 시작');
   });
 });

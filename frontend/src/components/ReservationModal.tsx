@@ -1,7 +1,6 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState, type ReactElement } from 'react';
 import clsx from 'clsx';
-import { z } from 'zod';
 import { addMinutes } from 'date-fns';
 import { createReservation, type CreateReservationPayload } from '@/api/reservations';
 import type { HostRead } from '@/api/hosts';
@@ -17,10 +16,6 @@ import {
 import { formatDateTimeLabel, formatSlotLabel, SLOT_MINUTES, toIsoWithOffset } from '@/lib/time';
 
 const MAX_DURATION_MINUTES = 240; // 백엔드 max_reservation_duration_minutes 기본값
-const DURATION_OPTIONS_MIN = Array.from(
-  { length: MAX_DURATION_MINUTES / SLOT_MINUTES },
-  (_, i) => (i + 1) * SLOT_MINUTES,
-);
 
 interface ReservationModalProps {
   open: boolean;
@@ -28,18 +23,9 @@ interface ReservationModalProps {
   startsAt: string;
   onClose: () => void;
   onCreated?: () => void | Promise<void>;
+  /** 드래그/클릭으로 정한 예약 길이(분). 미지정 시 30분. 모달에서 수정하지 않는다. */
+  durationMinutes?: number;
 }
-
-const formSchema = z
-  .object({
-    durationMinutes: z
-      .number()
-      .int()
-      .positive()
-      .max(MAX_DURATION_MINUTES, '최대 240분(4시간)까지 예약 가능합니다')
-      .refine((v) => v % SLOT_MINUTES === 0, '30분 단위로만 예약 가능합니다'),
-  })
-  .strict();
 
 const WINDOW_REASON_LABEL: Record<string, string> = {
   too_early: '시작 시간은 현재 이후여야 합니다',
@@ -70,19 +56,25 @@ export function ReservationModal({
   startsAt,
   onClose,
   onCreated,
+  durationMinutes: durationProp,
 }: ReservationModalProps): ReactElement | null {
   const containerRef = useRef<HTMLDivElement>(null);
-  const initialFocusRef = useRef<HTMLSelectElement>(null);
+  const initialFocusRef = useRef<HTMLButtonElement>(null);
   const queryClient = useQueryClient();
   const toast = useToast();
-  const [durationMinutes, setDurationMinutes] = useState<number>(SLOT_MINUTES);
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [windowReason, setWindowReason] = useState<string | null>(null);
 
-  const endsAtIso = useMemo(() => {
-    const start = new Date(startsAt);
-    return toIsoWithOffset(addMinutes(start, durationMinutes));
-  }, [startsAt, durationMinutes]);
+  // 길이는 드래그/클릭으로 정해진 고정값 — 30분 그리드·30~240분으로 클램프(방어).
+  const durationMinutes = useMemo(() => {
+    const grid = Math.round((durationProp ?? SLOT_MINUTES) / SLOT_MINUTES) * SLOT_MINUTES;
+    return Math.min(Math.max(grid, SLOT_MINUTES), MAX_DURATION_MINUTES);
+  }, [durationProp]);
+
+  const endsAtIso = useMemo(
+    () => toIsoWithOffset(addMinutes(new Date(startsAt), durationMinutes)),
+    [startsAt, durationMinutes],
+  );
 
   useFocusTrap(containerRef, {
     active: open,
@@ -92,7 +84,6 @@ export function ReservationModal({
 
   useEffect(() => {
     if (!open) return;
-    setDurationMinutes(SLOT_MINUTES);
     setFieldError(null);
     setWindowReason(null);
   }, [open, startsAt, host.id]);
@@ -143,12 +134,6 @@ export function ReservationModal({
     event.preventDefault();
     setFieldError(null);
     setWindowReason(null);
-    const parsed = formSchema.safeParse({ durationMinutes });
-    if (!parsed.success) {
-      const first = parsed.error.issues[0];
-      setFieldError(first?.message ?? '입력값이 올바르지 않습니다');
-      return;
-    }
     mutation.mutate({
       host_id: host.id,
       starts_at: toIsoWithOffset(new Date(startsAt)),
@@ -198,26 +183,11 @@ export function ReservationModal({
             <dd className="col-span-2 text-slate-900">
               {formatDateTimeLabel(endsAtIso)} ({formatSlotLabel(endsAtIso)})
             </dd>
+            <dt className="col-span-1 text-slate-500">길이</dt>
+            <dd className="col-span-2 font-medium text-slate-900">
+              {durationMinutes}분 ({(durationMinutes / 60).toFixed(1)}시간)
+            </dd>
           </dl>
-
-          <div className="space-y-1">
-            <label htmlFor="duration" className="text-sm font-medium text-slate-700">
-              예약 길이
-            </label>
-            <select
-              id="duration"
-              ref={initialFocusRef}
-              value={durationMinutes}
-              onChange={(e) => setDurationMinutes(Number(e.target.value))}
-              className="w-full rounded border border-slate-300 px-3 py-2 text-sm focus:border-brand focus:outline-none"
-            >
-              {DURATION_OPTIONS_MIN.map((m) => (
-                <option key={m} value={m}>
-                  {m}분 ({(m / 60).toFixed(1)}시간)
-                </option>
-              ))}
-            </select>
-          </div>
 
           {windowReason ? (
             <div role="alert" className="rounded border border-amber-300 bg-amber-50 p-2 text-xs text-amber-800">
@@ -234,6 +204,7 @@ export function ReservationModal({
           <div className="flex justify-end gap-2 pt-2">
             <button
               type="button"
+              ref={initialFocusRef}
               onClick={onClose}
               className="rounded border border-slate-300 px-3 py-1.5 text-sm text-slate-700 hover:bg-slate-100"
             >

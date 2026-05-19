@@ -11,7 +11,7 @@
 
 - 총 22개 태스크. 카테고리: 백엔드 8 / 프런트엔드 4 / 풀스택 2 / 기타(Host·Client·인증·인프라·운영) 8.
 - PRD Feature 매핑: F1=T04a·T16(개발) + T01·T04b(운영 전환), F2=T08·T13·T14·T17, F3=T07, F4=T09·T12·T15, F5=T06·T11·T17·T18.
-- 크리티컬 패스(개발 트랙): **T03 → T04a → T05 → T07 → T08 → T14 → T17** — Mock 인증 위에서 "원클릭 접속(입력 0개)" KPI 달성까지의 최단 경로. 외부 행정 의존 없음. 진행률 5/7 (T03/T04a/T05/T07/T17 완료, T08·T14 대기). 비크리티컬 백엔드 T06·T11·T16 추가 완료(2026-05-15).
+- 크리티컬 패스(개발 트랙): **T03 → T04a → T05 → T07 → T08 → T14 → T17** — Mock 인증 위에서 "원클릭 접속(입력 0개)" KPI 달성까지의 최단 경로. 외부 행정 의존 없음. 진행률 5/7 (T03/T04a/T05/T07/T17 완료, T08·T14 대기). 비크리티컬 T06·T11·T16 완료(2026-05-15), T21 캘린더·바로접속 통합 완료(2026-05-18).
 - 운영 전환 트랙: **T01 → T04b** — CNU SSO 프로토콜 확정 + Provider 통합. T04a 머지 이후 별도 트랙으로 병행, 운영 출시 전 머지 필수.
 
 ### 0-1. PRD-instruction.md MVP 요구사항 ↔ 태스크
@@ -310,7 +310,7 @@
 - 카테고리: 프런트엔드
 - 의존성: T04a, T05 (Provider 추상화 위에서 동작 — 실제 SSO redirect는 T04b 머지 시 자동 활성)
 - 상태: **완료 (2026-05-12)** — `frontend/` 트리(38 코드 + 7 test 파일) 신설, 백엔드 차단 요소(`GET /api/v1/hosts`) 부분 선행 추가, pytest 67 green (T16 신규 4건 + 기존 63), ruff + mypy strict pass. 사용자 환경 e2e 검증 완료: Node 20 + pnpm 9 설치 → `pnpm install` → `pnpm typecheck` + `pnpm lint`(0e/0w) + `pnpm test` 35/35 + `pnpm build`(gzip ~131KB) 모두 통과 + 브라우저 e2e 로그인/캘린더 동작 확인. e2e 도중 발견된 두 fix: ① `kstEndOfDay`가 23:59:59 반환해 백엔드 30분 그리드 422 → 다음날 00:00 KST(반열림 `[from, to)`)로 수정, ② `/me` 응답에 `id` 필드 누락으로 admin "내 예약" 화면이 전체 예약 노출 → `/me`에 내부 PK `id` 추가 + 프런트가 `?user_id=me.id` 명시 필터(캘린더 본인 셀 강조도 함께 활성화).
-- 추가 (2026-05-18, T17 작업 중 파생): 캘린더 호스트 행 헤더에 T06 status 배지 표시 — `components/HostStatusBadge.tsx`(IDLE 🟢 대기 중 / IN_USE 🔵 사용 중 / DEGRADED 🟠 성능 저하 / OFFLINE 🔴 오프라인, 미지값 회색 fallback). `GET /hosts`가 이미 `status`를 반환해 백엔드 변경 없음. 부하·사용자·SSE 실시간은 T18 범위로 분리. 테스트 `HostStatusBadge.test.tsx` 5 + `CalendarGrid.test.tsx` 배지 1.
+- 추가 (2026-05-18, T17 작업 중 파생): 캘린더 호스트 행 헤더에 T06 status 배지 표시 — `components/HostStatusBadge.tsx`(IDLE 🟢 대기 중 / IN_USE 🔵 사용 중 / DEGRADED 🟠 점검 중 / OFFLINE 🔴 오프라인, 미지값 회색 fallback). `GET /hosts`가 이미 `status`를 반환해 백엔드 변경 없음. 부하·사용자·SSE 실시간은 T18 범위로 분리. 테스트 `HostStatusBadge.test.tsx` 5 + `CalendarGrid.test.tsx` 배지 1.
 - 결정 사항:
   - **프레임워크 = React 18 + Vite + TypeScript (strict, `exactOptionalPropertyTypes`)** — TanStack Query v5 + axios + Tailwind + Vitest/RTL/MSW. SSR 없음(SPA + 백엔드 세션 쿠키). `pnpm@9` / `Node 20`.
   - **호스트 메타 = `GET /api/v1/hosts` (read-only) 부분 선행 (§11 A7)** — T06 본구현 전까지 캘린더 host 축 라벨링 차단 요소만 풀기. ingest/상태머신/필터/SSE는 T06이 흡수.
@@ -363,22 +363,42 @@
 ### T21. 캘린더·바로 접속 화면 통합
 - 카테고리: 프런트엔드
 - 의존성: T16, T17
-- 상태: **대기** (2026-05-18 신설 — T17 작업 중 사용자 제안으로 분리)
+- 상태: **완료 (2026-05-18, e2e 후속 보정 2026-05-19)** — frontend Vitest 74/74 green (T21 신규: `time` +6 · `CalendarGrid` +5 · `CalendarPage` 신규 3 · `ReservationModal` +2, `AvailableHostsPage` 테스트 삭제 — 이후 2026-05-19 e2e 후속 보정으로 드래그 cap·과거/예약불가 호스트 차단·날짜별 자동 스크롤 등 +9), typecheck + lint(0e) + build 통과. 백엔드는 e2e 후속으로 호스트 상태 일관성 전이만 추가(아래) — 그 외 T17 API·헬퍼를 표현 계층만 재설계해 재사용.
 - 배경: T17이 `/connect`(바로 접속)를 독립 페이지로 구현했으나 캘린더(T16, `/`)와 정보가 분리돼 사용자가 두 화면을 오간다. 캘린더 한 화면에서 예약 현황 + 즉시 사용을 함께 처리하도록 통합한다. 화면 구조 재설계라 별도 태스크로 분리. T16에서 stretch goal로 미뤘던 '드래그 영역 선택'도 같은 `CalendarGrid` 재설계 범위라 본 태스크에 흡수한다(그리드를 두 번 갈아엎지 않기 위함).
+- 결정 사항 (2026-05-18):
+  - **`/connect` 완전 제거** — `AvailableHostsPage`·라우트·"바로 접속" 네비 삭제, `*` catch-all이 `/connect`를 `/404`로 보낸다. 북마크 redirect는 두지 않음(사용자 결정).
+  - **2일(48시간·96칸) 윈도우** — 캘린더를 `selectedDate` 00:00부터 48시간으로 렌더(`kstWindowEnd(date, 2)`, `kstEndOfDay` 대체). 슬롯이 연속 인덱스라 드래그가 자정 경계를 별도 분기 없이 가로질러 23:00~익일 02:00 같은 예약을 한 동작으로 선택한다. 하루 경계 컬럼에 굵은 디바이더 + 날짜 헤더.
+  - **즉시 사용 윈도우 강조 = 부분 바 (호버=초록 미리보기 / 확정=파랑)** — 기본은 색 없음. `[즉시 사용]` 버튼 호버/포커스 시 그 행 셀에 `[now, available_until)` 겹침 구간을 emerald 반투명 `position:absolute` 부분 바(`pointer-events-none`)로 미리보기한다. 클릭하면 같은 부분 바가 **즉시 파란(blue 반투명) 확정 바**로 바뀐다 — `confirmedInstant` 낙관적 상태라 네트워크/refetch를 기다리지 않아 회색 깜빡임이 없다(실패 시 롤백). 확정 바가 덮는 셀은 배경을 회색으로 둬 `now`가 슬롯 중간이어도 첫 칸이 슬롯 통째가 아닌 부분 폭으로 정확히 그려진다. 확정 바는 `sessionStorage`(`sc.confirmedInstant`)에 저장돼 **새로고침 후에도** 윈도우가 끝날 때까지 유지된다 — 안 그러면 reload 후 캘린더 refetch가 슬롯을 통째 OCCUPIED로 다시 칠한다. 저장 항목에 `reservationId`(onSuccess 시점 기록)를 함께 담아, 그 예약이 취소돼 캘린더 슬롯에서 사라지면 검증 effect가 확정 바를 자동 해제한다(취소 후 stale 바 방지). 확정 바 상태는 **호스트별 다중 추적**(`confirmedInstants` 배열) — 여러 호스트를 연달아 즉시 사용해도 각 호스트가 자기 부분 바를 유지한다(단건 추적 시 두 번째 즉시 사용이 첫 호스트 바를 덮어쓰던 현상 수정, 2026-05-19 e2e). 단 다중 호스트 즉시 사용 자체는 T22에서 정책상 차단 예정인 임시 대응. `내 예약` 셀 색은 `bg-blue-500`→`bg-blue-200` 파스텔로 통일. 초안은 항상 칠하는 방식이었으나 산만하다는 사용자 피드백(2026-05-18 e2e)으로 호버 트리거 + 확정 색 분리로 변경.
+  - **호스트 상태 일관성 (백엔드 — T21 e2e 후속 보정)** — `POST /reservations/instant`가 예약 생성 후 호스트를 `transition_host(IN_USE)`로 전이하고, 대칭으로 `DELETE /reservations/{id}`가 취소 후 활성 예약이 없고 IN_USE면 `transition_host(IDLE)`로 복귀시킨다. 정상 경로는 다음 heartbeat가 status를 평가하지만, 상태 배지가 클릭/취소 직후 즉시 반영되도록 양방향 모두 전이. 즉시 사용은 IDLE 호스트만 허용하므로 IDLE↔IN_USE는 T06 룰 ②(활성 예약)의 정상 전이이며 다음 heartbeat가 재확인/보정한다. DEGRADED/OFFLINE은 메트릭·heartbeat 주도라 건드리지 않는다. 프런트는 `hostsQuery`(`['hosts']`)를 15초 폴링해 타 사용자의 점유/취소가 상태 배지에 ~15초 내 반영되게 하고, `instantMutation` 409 시 `['hosts']`/`['calendar']`를 무효화해 stale 화면을 즉시 보정한다. 정규 예약 생성(`onReservationCreated`)도 `['hosts']`를 무효화 — 새 예약이 그 호스트의 `available_until`을 줄이므로, 안 하면 즉시 사용 호버의 초록 미리보기 바가 stale하게 새 예약(파란) 셀까지 덮는다. 캘린더 탭 복귀 시에는 세 쿼리(`hosts`/`hosts·available`/`calendar`)에 `refetchOnMount: 'always'`를 둬 staleTime 무관 1회 강제 갱신한다. 실시간 SSE는 후속(T18 관리자 대시보드와 함께 검토). 초기 계획의 "백엔드 변경 없음"에서 벗어나는 예외 — e2e 피드백(2026-05-18)으로 추가.
+  - **드래그 → 확인 모달** — 셀 `mousedown`→`mouseenter`→window `mouseup`. 앵커에서 연속 OPEN 셀까지 클램핑 → `spanMinutes`(최대 240)를 결정. 단일 클릭·키보드 Enter는 `spanMinutes` 미지정 → 30분. 제출은 `POST /reservations`라 30분 그리드 정렬 유지. 드래그 강조와 커밋은 동일한 `effectiveDragSpan`(앵커에서 연속 OPEN·8칸=240분 cap)을 공유해 "보이는 파란 범위 = 실제 예약 범위" — 4시간 초과분/비-OPEN 너머는 강조도 안 된다. 드래그 범위 셀은 `hover:` 회색을 끄므로 커서 아래 셀도 파랑을 유지한다. `mouseup` 후 `ReservationModal`이 열려 있는 동안에도 강조가 유지된다 — `selectedCell`에서 파생한 `selectedRange`가 `dragRange`를 이어받아(`isHighlighted` = 드래그 범위 ∪ 모달 선택 범위), 모달이 닫히면 자동 해제.
+  - **예약 모달은 길이 고정 표시(드롭다운 제거)** — `ReservationModal`은 드래그/클릭으로 정해진 길이(`durationMinutes` prop)를 읽기 전용 텍스트로만 보여주고 `[취소]`/`[예약]`만 둔다. 길이 `<select>`·zod `formSchema` 제거 — 길이는 드래그 span(또는 클릭 30분)으로 이미 확정. 강조 = 실제 예약 길이가 항상 일치.
+  - **과거 시각 셀 차단** — `minReservableCol = nowColIndex+1`(오늘 뷰; now가 슬롯 중간이라 현재 슬롯도 `starts_at<now`라 불가). 그 미만 컬럼은 `cursor-not-allowed`, `mousedown`/키보드 Enter 시 `onBlockedAttempt('past')`로 "과거 시간으로는 예약할 수 없습니다" 토스트(백엔드 422를 기다리지 않음). `effectiveDragSpan`도 `minReservableCol`에서 클램프 — 미래에서 과거로 끌어도 now 경계에서 멈춘다.
+  - **예약 불가 호스트 차단 (프런트 게이트)** — 호스트 `status`가 DEGRADED/OFFLINE이거나 `ip_address`가 없으면(접속 정보 미등록) 그 행 전체가 예약 불가 — 셀 클릭/드래그/키보드 Enter 차단 + `cursor-not-allowed` + 토스트. 사유는 `hostBlockedReason()` 헬퍼가 판정: 점검중·오프라인 → `onBlockedAttempt('host-unreservable')`("점검 중·오프라인 상태의 PC는 예약할 수 없습니다"), IP 미등록 → `onBlockedAttempt('host-no-ip')`("접속 정보가 등록되지 않은 PC는 예약할 수 없습니다"). 상태가 IP 미등록보다 우선. 과거 시각 차단과 콜백(`onBlockedAttempt(reason)`)을 공유. 캘린더가 유일한 예약 경로라 프런트 게이트만으로 충분 — `create_reservation` 백엔드 검증은 도입 보류(테스트 `host` 픽스처가 OFFLINE로 시드돼 정규 예약 테스트 9+개에 광범위 영향, 또 미래 슬롯을 *현재* 호스트 상태로 막으면 일시적 오프라인 PC 사전 예약 불가라는 부작용). 즉시 사용의 IDLE 가드는 "지금 사용"이라 백엔드 검증 유지 — 정규 예약과는 성격이 다름.
+  - **셀 폭 축소 + 날짜별 자동 스크롤** — 데이터 컬럼 60px→44px. 날짜 윈도우가 바뀔 때(`firstColStart`=첫 컬럼 시각이 식별자) 1회 스크롤: 오늘이면 now 셀 안의 **현재 시각 지점**(슬롯 시작이 아니라 슬롯 내 경과 비율 `frac` 반영, `scrollLeft = (nowColIndex + frac) × 44`)이 sticky 호스트 헤더 바로 오른쪽에 오도록, **다른 날짜면 `scrollLeft = 0`(그 날 00:00)**. 같은 윈도우의 재렌더(15초 폴링 등)에는 재스크롤하지 않아 사용자 수동 스크롤을 보존. `[즉시 사용]` 호버/포커스 시에도 now 컬럼으로 스크롤. 셀에 키보드 포커스는 주지 않는다 — 호버 후 잔류 포커스 링·버튼 탭 시 포커스 탈취 방지(2026-05-18 e2e 피드백).
+  - **즉시 사용 UI는 오늘 뷰 한정** — `availableHostsQuery`는 `enabled: isToday`로 15초 폴링, `instantByHost`도 `isToday` gate. 다른 날짜 선택 시 버튼·부분 바·자동 스크롤 모두 숨김.
 - 완료 조건
-  - [ ] `/connect`(`AvailableHostsPage`) 폐기 — 내용을 `CalendarPage`/`CalendarGrid`로 흡수. "바로 접속" 네비 메뉴 제거 또는 캘린더로 redirect
-  - [ ] 캘린더 페이지가 `getCalendar` + `listHosts` + `listAvailableHosts`(15초 폴링)를 한 화면에서 통합 fetch
-  - [ ] 호스트 행 헤더에 즉시 사용 가능 호스트는 `[즉시 사용]` 버튼 + 잔여 사용 가능 시간 표시 (IDLE·현재 비어있는 호스트만; OFFLINE/IN_USE 행은 버튼 없음)
-  - [ ] 즉시 사용 가능 구간 `[now, available_until)`을 해당 호스트 행 캘린더 셀에 색으로 하이라이트
-  - [ ] `[즉시 사용]` 버튼 호버 시 캘린더 포커스/스크롤을 now 셀로 이동
-  - [ ] "오늘" 뷰에서만 즉시 사용 UI 노출 (다른 날짜 선택 시 숨김)
-  - [ ] 캘린더 셀 **드래그로 예약 시간 범위 선택** — T16에서 stretch로 분리했던 항목(단일 클릭 예약은 T16 구현 완료, 키보드 내비도 완료). 드래그로 만든 예약은 `POST /reservations`를 거치므로 30분 그리드 정렬 유지
-  - [ ] T17 백엔드/API(`/hosts/available`+`available_until`, `POST /reservations/instant`, `lib/moonlight.ts`, `useMoonlightConnect`, `MoonlightInstallGuide`)는 그대로 재사용 — 표현 계층만 재설계, 백엔드 변경 없음
-- 미해결 설계 포인트 (구현 전 확정 필요):
-  - 비그리드 first 셀 표현 — `now`가 슬롯 중간(예: 13:48)이라 첫 30분 칸이 부분 점유. 칸 통째 강조 vs 칸 안 부분 바
-  - `/connect` 라우트 처리 — 완전 제거 vs 캘린더로 redirect (북마크/링크 호환)
-  - 캘린더 정보 밀도 — 호스트×48칸 그리드에 버튼·잔여시간·하이라이트 추가 시 밀도 부담, 좁은 화면/모바일 대응
-- 산출물: `CalendarPage`/`CalendarGrid` 재설계, `AvailableHostsPage` 제거, 라우팅/네비 갱신, 호버→셀 이동 인터랙션
+  - [x] `/connect`(`AvailableHostsPage`) 폐기 — 내용을 `CalendarPage`/`CalendarGrid`로 흡수, 라우트·네비 제거 (`*`→`/404`)
+  - [x] 캘린더 페이지가 `getCalendar` + `listHosts` + `listAvailableHosts`(15초 폴링)를 한 화면에서 통합 fetch
+  - [x] 호스트 행 헤더에 즉시 사용 가능 호스트는 `[즉시 사용]` 버튼 + 잔여 사용 가능 시간 표시 (`listAvailableHosts`가 IDLE·현재 비어있는 호스트만 반환 → OFFLINE/IN_USE 행은 자동으로 버튼 없음)
+  - [x] 즉시 사용 가능 구간 `[now, available_until)`을 `[즉시 사용]` 호버/포커스 시 해당 호스트 행 셀에 부분 바로 하이라이트
+  - [x] `[즉시 사용]` 버튼 호버 시 캘린더 포커스/스크롤을 now 셀로 이동
+  - [x] "오늘" 뷰에서만 즉시 사용 UI 노출 (다른 날짜 선택 시 숨김)
+  - [x] 캘린더 셀 **드래그로 예약 시간 범위 선택** — 드래그로 만든 예약은 `POST /reservations`를 거쳐 30분 그리드 정렬 유지
+  - [x] T17 백엔드/API(`/hosts/available`+`available_until`, `POST /reservations/instant`, `lib/moonlight.ts`, `useMoonlightConnect`, `MoonlightInstallGuide`)는 그대로 재사용 — 표현 계층만 재설계, 백엔드 변경 없음
+- 산출물: `frontend/` — `pages/CalendarPage.tsx`(즉시 사용/2일 윈도우 통합) + `components/CalendarGrid.tsx`(96칸·44px·부분 바·드래그·자동 스크롤 재설계) + `components/ReservationModal.tsx`(`initialDurationMinutes` 프리필) + `lib/time.ts`(`formatAvailableWindow` 이전 + `kstWindowEnd`, `kstEndOfDay` 제거) + `components/Layout.tsx`/`routes/index.tsx`(`/connect` 제거) + `pages/AvailableHostsPage.tsx`·테스트 삭제 + `pages/CalendarPage.test.tsx` 신규 + `CalendarGrid`/`ReservationModal`/`time` 테스트 보강
+
+### T22. 사용자 동시 예약 1건 제한 (자기 예약 겹침 금지)
+- 카테고리: 백엔드 (예약 도메인 / T05 정책)
+- 의존성: T05
+- 상태: **대기** (2026-05-18 신설 — T21 e2e 중 사용자 제안으로 분리)
+- 배경: 현재 `reservations`의 EXCLUDE 제약(`host_id WITH =, time_range WITH &&`)은 **동일 호스트**의 시간 겹침만 막고 `user_id`는 보지 않는다. 그래서 한 사용자가 호스트 A·B를 같은 시간대에 동시 예약/즉시 사용할 수 있다(T21 e2e에서 demo-pc-01·pc-lab-02를 연달아 즉시 사용 → 둘 다 점유 가능 확인). "한 사용자는 같은 시각에 PC 1대만 사용" 정책을 도입해 자원 독점을 막는다.
+- 완료 조건
+  - [ ] 예약 생성 시 본인의 기존 CONFIRMED 예약과 시간대가 겹치면 거부 — `create_reservation` + `create_instant_reservation` 양쪽에 적용
+  - [ ] 서비스 계층 검증(`services/reservation.py`) — 본인 활성 예약 겹침 조회 후 도메인 예외 raise. DB EXCLUDE를 `user_id` 기준으로 추가할지(마이그레이션) vs 서비스 검증으로 둘지 결정
+  - [ ] 전용 도메인 예외 + HTTP 매핑(409 권장, `reservation_conflict`와 구분되는 `error` 코드)
+  - [ ] 프런트: 해당 4xx를 캘린더/즉시 사용 양쪽에서 친화 메시지로 분기
+  - [ ] 테스트 — 본인 겹침 예약 거부, 다른 사용자 겹침은 기존대로 호스트별 EXCLUDE가 처리
+- 미해결 설계 포인트: 즉시 사용은 starts_at=now라 항상 "지금"과 겹침 — 이미 사용 중인 사용자는 즉시 사용도 차단되는지(권장: 차단). 관리자 예외 여부.
 
 ---
 
@@ -424,6 +444,7 @@ flowchart LR
     T19[T19 수동 PIN 폴백]:::full
     T20[T20 배포/인스톨러]:::ext
     T21[T21 캘린더·바로접속 통합]:::fe
+    T22[T22 사용자 동시 예약 제한]:::be
 
     T03 --> T04a --> T05 --> T07 --> T08
     T04a --> T04b
@@ -444,6 +465,7 @@ flowchart LR
     T07 --> T17
     T16 --> T21
     T17 --> T21
+    T05 --> T22
     T06 --> T18
     T09 --> T18
     T10 --> T20

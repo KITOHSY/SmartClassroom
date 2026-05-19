@@ -21,6 +21,16 @@ export function formatDateTimeLabel(date: Date | string): string {
   );
 }
 
+/** available_until(ISO)까지 남은 시간을 사람이 읽는 문자열로 — "15분", "2시간 30분". */
+export function formatAvailableWindow(untilIso: string): string {
+  const mins = Math.round((new Date(untilIso).getTime() - Date.now()) / 60_000);
+  if (mins <= 0) return '곧 다음 예약 시작';
+  if (mins < 60) return `${mins}분`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m === 0 ? `${h}시간` : `${h}시간 ${m}분`;
+}
+
 export function floorToSlot(date: Date, slotMinutes: number = SLOT_MINUTES): Date {
   const result = new Date(date);
   result.setSeconds(0, 0);
@@ -50,13 +60,18 @@ export function kstStartOfDay(date: Date): Date {
   return new Date(iso);
 }
 
-export function kstEndOfDay(date: Date): Date {
-  // 캘린더 매트릭스 to는 반열림 구간 [from, to) — 같은 날 23:30 슬롯을 포함하려면 다음날 00:00.
-  // 백엔드 _ensure_grid는 30분 그리드(:00/:30)만 허용 → 23:59:59는 422.
+/**
+ * 캘린더 윈도우 종료 시각 — 반열림 구간 [from, to).
+ *
+ * T21은 캘린더를 하루가 아닌 2일(96칸) 윈도우로 렌더해 드래그가 자정 경계를 넘어
+ * 다음 날 칸까지 이어지게 한다. 종료는 항상 KST 00:00 경계 — 백엔드 `_ensure_grid`가
+ * 30분 그리드(:00/:30)만 허용하므로 23:59:59 같은 비그리드 종료는 422.
+ */
+export function kstWindowEnd(date: Date, days = 2): Date {
   const zoned = toZonedTime(date, KST);
   zoned.setHours(0, 0, 0, 0);
-  const next = addDays(zoned, 1);
-  const iso = formatInTimeZone(next, KST, "yyyy-MM-dd'T'00:00:00XXX");
+  const end = addDays(zoned, days);
+  const iso = formatInTimeZone(end, KST, "yyyy-MM-dd'T'00:00:00XXX");
   return new Date(iso);
 }
 

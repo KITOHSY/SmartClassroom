@@ -39,6 +39,7 @@ function createWrapper(qc: QueryClient): (props: { children: ReactNode }) => Rea
 function renderModal(opts: {
   onClose?: () => void;
   onCreated?: () => void | Promise<void>;
+  durationMinutes?: number;
 } = {}) {
   const qc = new QueryClient({
     defaultOptions: {
@@ -57,6 +58,9 @@ function renderModal(opts: {
         startsAt={STARTS_AT}
         onClose={onClose}
         onCreated={onCreated}
+        {...(opts.durationMinutes !== undefined
+          ? { durationMinutes: opts.durationMinutes }
+          : {})}
       />
     </Wrapper>,
   );
@@ -116,13 +120,15 @@ describe('<ReservationModal />', () => {
     });
   });
 
-  it('duration select에 240분 초과 옵션 없음 (클라이언트 차단)', () => {
+  it('durationMinutes를 길이로 표시하고 편집 드롭다운은 없다', () => {
+    renderModal({ durationMinutes: 120 });
+    expect(screen.getByText(/120분/)).toBeInTheDocument();
+    // 길이는 읽기 전용 — select(combobox) 없음.
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+  });
+
+  it('durationMinutes 미지정 시 기본 30분으로 표시', () => {
     renderModal();
-    const select = screen.getByLabelText('예약 길이') as HTMLSelectElement;
-    const values = Array.from(select.options).map((o) => Number(o.value));
-    expect(Math.max(...values)).toBe(240);
-    expect(values.some((v) => v > 240)).toBe(false);
-    // 30분 그리드만 — 30, 60, ..., 240 = 8개.
-    expect(values.length).toBe(8);
+    expect(screen.getByText(/30분/)).toBeInTheDocument();
   });
 });

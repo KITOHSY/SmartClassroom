@@ -39,17 +39,6 @@ export function Layout(): ReactElement {
               캘린더
             </NavLink>
             <NavLink
-              to="/connect"
-              className={({ isActive }) =>
-                clsx(
-                  'rounded px-2 py-1',
-                  isActive ? 'bg-slate-100 font-medium text-slate-900' : 'text-slate-600',
-                )
-              }
-            >
-              바로 접속
-            </NavLink>
-            <NavLink
               to="/reservations"
               className={({ isActive }) =>
                 clsx(

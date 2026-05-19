@@ -123,6 +123,52 @@ async def test_instant_happy_path(auth_client: AuthClientFactory, host: int) -> 
 
 
 @pytest.mark.asyncio
+async def test_instant_marks_host_in_use(auth_client: AuthClientFactory, host: int) -> None:
+    """즉시 사용 성공 → 호스트 status가 IDLE에서 IN_USE로 전이된다 (T21 피드백)."""
+    await _set_host_status(host, "IDLE")
+    ac = await auth_client()
+
+    r = await ac.post("/api/v1/reservations/instant", json={"host_id": host})
+    assert r.status_code == 201, r.text
+
+    from broker.app.domain.host import Host
+    from broker.app.infra.db import get_session_factory
+
+    factory = get_session_factory()
+    async with factory() as session:
+        h = await session.get(Host, host)
+    assert h is not None
+    assert h.status == "IN_USE"
+
+
+@pytest.mark.asyncio
+async def test_cancel_reverts_host_to_idle(auth_client: AuthClientFactory, host: int) -> None:
+    """즉시 사용으로 IN_USE가 된 호스트는 예약 취소 시 IDLE로 복귀한다 (T21 후속)."""
+    await _set_host_status(host, "IDLE")
+    ac = await auth_client()
+
+    r = await ac.post("/api/v1/reservations/instant", json={"host_id": host})
+    assert r.status_code == 201, r.text
+    rid = int(r.json()["reservation_id"])
+
+    from broker.app.domain.host import Host
+    from broker.app.infra.db import get_session_factory
+
+    factory = get_session_factory()
+    async with factory() as session:
+        h = await session.get(Host, host)
+        assert h is not None and h.status == "IN_USE"
+
+    d = await ac.delete(f"/api/v1/reservations/{rid}")
+    assert d.status_code == 204, d.text
+
+    async with factory() as session:
+        h = await session.get(Host, host)
+    assert h is not None
+    assert h.status == "IDLE"
+
+
+@pytest.mark.asyncio
 async def test_instant_quota_exceeded(
     auth_client: AuthClientFactory, host: int, other_host: int
 ) -> None:

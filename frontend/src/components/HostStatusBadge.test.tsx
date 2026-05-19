@@ -6,7 +6,7 @@ describe('<HostStatusBadge />', () => {
   it.each([
     ['IDLE', '대기 중'],
     ['IN_USE', '사용 중'],
-    ['DEGRADED', '성능 저하'],
+    ['DEGRADED', '점검 중'],
     ['OFFLINE', '오프라인'],
   ])('status=%s → 라벨 "%s"', (status, label) => {
     render(<HostStatusBadge status={status} />);

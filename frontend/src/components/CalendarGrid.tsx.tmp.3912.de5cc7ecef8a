@@ -53,8 +53,8 @@ export interface CalendarGridProps {
   confirmedInstants?: readonly { hostId: number; untilIso: string }[];
   /** 예약 모달이 열린 동안 파랗게 유지할 선택 범위 (`startsAt`부터 `minutes`분). */
   selectedRange?: { hostId: number; startsAt: string; minutes: number } | null;
-  /** 예약 불가 셀(과거 시각 / 점검중·오프라인 호스트 / IP 미등록 호스트)을 클릭·드래그·Enter할 때. */
-  onBlockedAttempt?: (reason: 'past' | 'host-unreservable' | 'host-no-ip') => void;
+  /** 예약 불가 셀(과거 시각 / DEGRADED·OFFLINE 호스트)을 클릭/드래그/Enter하려 할 때 호출. */
+  onBlockedAttempt?: (reason: 'past' | 'host-unreservable') => void;
 }
 
 interface ColumnHeader {
@@ -94,14 +94,6 @@ function effectiveDragSpan(
   return { lo: Math.min(startCol, last), hi: Math.max(startCol, last) };
 }
 
-/** 호스트가 예약 불가면 그 사유, 가능하면 null.
- *  점검 중(DEGRADED)/오프라인 → 'host-unreservable', IP 미등록 → 'host-no-ip'(상태가 우선). */
-function hostBlockedReason(host: HostRead): 'host-unreservable' | 'host-no-ip' | null {
-  if (host.status === 'DEGRADED' || host.status === 'OFFLINE') return 'host-unreservable';
-  if (host.ip_address === null) return 'host-no-ip';
-  return null;
-}
-
 export function CalendarGrid({
   hosts,
   slotsByHost,
@@ -117,8 +109,7 @@ export function CalendarGrid({
   onBlockedAttempt,
 }: CalendarGridProps): ReactElement {
   const scrollRef = useRef<HTMLDivElement>(null);
-  // 마지막으로 자동 스크롤한 날짜 윈도우(첫 컬럼 시각). 윈도우가 바뀌면 다시 스크롤한다.
-  const scrolledWindowRef = useRef<string | undefined>(undefined);
+  const hasAutoScrolledRef = useRef(false);
   const [dragRange, setDragRange] = useState<DragRange | null>(null);
   // 즉시 사용 버튼에 호버/포커스한 호스트 — 그 행에만 instant 윈도우 부분 바를 그린다.
   const [hoverInstantHostId, setHoverInstantHostId] = useState<number | null>(null);
@@ -155,8 +146,6 @@ export function CalendarGrid({
 
   const colCount = columns.length;
   const rowCount = hosts.length;
-  // 표시 중인 날짜 윈도우 식별자 — 첫 컬럼(선택 날짜 00:00)의 시각.
-  const firstColStart = columns[0]?.startsAt;
 
   // 키보드(Enter/Space) 활성화 — 드래그와 무관, spanMinutes 미지정(모달 기본 30분).
   const onActivate = ({ row, col }: { row: number; col: number }): void => {
@@ -165,9 +154,8 @@ export function CalendarGrid({
     const slot = slotsByHost.get(host.id)?.[col];
     if (!slot) return;
     if (slot.status !== 'OPEN') return;
-    const blocked = hostBlockedReason(host);
-    if (blocked !== null) {
-      onBlockedAttempt?.(blocked);
+    if (host.status === 'DEGRADED' || host.status === 'OFFLINE') {
+      onBlockedAttempt?.('host-unreservable');
       return;
     }
     if (col < minReservableCol) {
@@ -254,34 +242,27 @@ export function CalendarGrid({
     return () => window.removeEventListener('mouseup', onUp);
   }, [dragRange, hosts, slotsByHost, onCellActivate, minReservableCol]);
 
-  // now 셀 안에서 "현재 시각" 지점이 sticky 호스트 헤더 바로 오른쪽(가시 영역 맨 왼쪽)에
-  // 오도록 정렬 — 슬롯 시작이 아니라, 슬롯 내 경과 비율(frac)만큼 더 스크롤한다.
+  // now 컬럼을 sticky 호스트 헤더 바로 오른쪽(가시 영역 맨 왼쪽 셀)으로 정렬한다.
+  // 컬럼 폭이 고정(CELL_WIDTH)이라 scrollLeft = nowColIndex * CELL_WIDTH면 정확히 맞는다.
   const scrollNowToLeft = useCallback((): void => {
     if (nowColIndex == null) return;
     const container = scrollRef.current;
-    const col = columns[nowColIndex];
-    if (container === null || col === undefined) return;
-    const slotStart = new Date(col.startsAt).getTime();
-    const slotEnd = new Date(col.endsAt).getTime();
-    const frac = Math.min(Math.max((Date.now() - slotStart) / (slotEnd - slotStart), 0), 1);
-    container.scrollLeft = (nowColIndex + frac) * CELL_WIDTH;
-  }, [nowColIndex, columns]);
+    if (!container) return;
+    container.scrollLeft = nowColIndex * CELL_WIDTH;
+  }, [nowColIndex]);
 
-  // 날짜 윈도우가 바뀔 때 1회 스크롤 — 오늘이면 now 컬럼, 다른 날짜면 00:00(맨 왼쪽).
-  // firstColStart를 윈도우 식별자로 써, 같은 윈도우에서의 재렌더(15초 폴링 등)에는 다시
-  // 스크롤하지 않아 사용자의 수동 스크롤을 보존한다.
+  // 진입/새로고침 시 1회 — now 컬럼이 맨 왼쪽 셀이 되도록 스크롤. 다른 날짜로 이동하면
+  // 플래그를 리셋해 오늘로 돌아올 때 다시 스크롤한다.
   useEffect(() => {
-    const container = scrollRef.current;
-    if (container === null || firstColStart === undefined) return;
-    if (scrolledWindowRef.current === firstColStart) return;
-    if (isToday) {
-      if (nowColIndex == null) return; // now 컬럼 준비 전 — 보류(아직 마킹하지 않음)
-      scrollNowToLeft();
-    } else {
-      container.scrollLeft = 0; // 다른 날짜 → 그 날 00:00
+    if (!isToday || nowColIndex == null) {
+      hasAutoScrolledRef.current = false;
+      return;
     }
-    scrolledWindowRef.current = firstColStart;
-  }, [firstColStart, isToday, nowColIndex, scrollNowToLeft]);
+    if (hasAutoScrolledRef.current) return;
+    if (!scrollRef.current) return;
+    scrollNowToLeft();
+    hasAutoScrolledRef.current = true;
+  }, [isToday, nowColIndex, scrollNowToLeft]);
 
   // 즉시 사용 버튼 호버/포커스 → 그 행에 부분 바 표시 + now 컬럼으로 스크롤.
   // 셀에 키보드 포커스는 주지 않는다 — 호버 후 잔류 포커스 링 / 버튼 탭 시 포커스 탈취 방지.
@@ -366,7 +347,7 @@ export function CalendarGrid({
             minReservableCol={minReservableCol}
             onDragStart={onDragStart}
             onDragEnter={onDragEnter}
-            onBlockedAttempt={onBlockedAttempt}
+            onPastAttempt={onPastAttempt}
             isToday={isToday}
             availableUntil={instantByHost.get(host.id)}
             instantPending={pendingInstantHostId === host.id}
@@ -395,7 +376,7 @@ interface RowProps {
   minReservableCol: number;
   onDragStart: (row: number, col: number) => void;
   onDragEnter: (row: number, col: number) => void;
-  onBlockedAttempt: ((reason: 'past' | 'host-unreservable' | 'host-no-ip') => void) | undefined;
+  onPastAttempt: (() => void) | undefined;
   isToday: boolean;
   availableUntil: string | undefined;
   instantPending: boolean;
@@ -438,7 +419,7 @@ function Row({
   minReservableCol,
   onDragStart,
   onDragEnter,
-  onBlockedAttempt,
+  onPastAttempt,
   isToday,
   availableUntil,
   instantPending,
@@ -450,8 +431,6 @@ function Row({
 }: RowProps): ReactElement {
   const showInstant = isToday && availableUntil !== undefined;
   const noIp = host.ip_address === null;
-  // 점검 중·오프라인·접속 정보 미등록(IP 없음) 호스트는 행 전체가 예약 불가.
-  const hostBlocked = hostBlockedReason(host);
   // 부분 바: 즉시 사용 확정(파랑) 우선, 없으면 버튼 호버 미리보기(초록).
   const barUntil = confirmedUntil ?? (barVisible ? availableUntil : undefined);
   const barConfirmed = confirmedUntil !== undefined;
@@ -520,12 +499,8 @@ function Row({
             disabled={otherUser}
             onMouseDown={(event) => {
               if (slot.status !== 'OPEN') return;
-              if (hostBlocked !== null) {
-                onBlockedAttempt?.(hostBlocked);
-                return;
-              }
               if (isPast) {
-                onBlockedAttempt?.('past'); // 과거 시각 셀 — 드래그 시작 안 함
+                onPastAttempt?.(); // 과거 시각 셀 — 드래그 시작 안 함
                 return;
               }
               event.preventDefault(); // 드래그 중 텍스트 선택 방지
@@ -539,12 +514,8 @@ function Row({
               // 강조 셀은 bg-slate-100을 빼 bg-blue-200만 남긴다 — 두 배경이 함께 붙으면
               // Tailwind 클래스 순서로 회색이 이겨 강조가 안 보인다.
               (isOpen || inConfirmedBar) && !isHighlighted(rowIndex, c) && 'bg-slate-100',
-              isOpen &&
-                !isPast &&
-                hostBlocked === null &&
-                !isHighlighted(rowIndex, c) &&
-                'hover:bg-slate-200',
-              isOpen && (isPast || hostBlocked !== null) && 'cursor-not-allowed',
+              isOpen && !isPast && !isHighlighted(rowIndex, c) && 'hover:bg-slate-200',
+              isOpen && isPast && 'cursor-not-allowed',
               isMine && !inConfirmedBar && 'bg-blue-200',
               otherUser && 'cursor-not-allowed bg-rose-200 text-rose-900',
               isOpen && isHighlighted(rowIndex, c) && 'bg-blue-200',

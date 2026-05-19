@@ -19,7 +19,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from broker.app.api.deps import get_current_user, get_db
 from broker.app.api.schemas.reservation import (
@@ -41,6 +41,7 @@ from broker.app.domain.reservation import Reservation
 from broker.app.domain.user import User
 from broker.app.services import reservation as reservation_service
 from broker.app.services import token_service
+from broker.app.services.host_status import transition_host
 from broker.app.services.reservation import (
     HostNotAvailableError,
     HostNotFoundError,
@@ -129,6 +130,14 @@ async def instant_reservation_endpoint(
     response = await _issue_connect_token_response(
         db, user=user, reservation=reservation, client="instant_use"
     )
+    # 즉시 사용 — 호스트를 곧장 IN_USE로 전이한다. 예약이 now를 덮으므로 T06 룰 ②의
+    # 정상 상태이고(즉시 사용은 IDLE 호스트만 허용), 다음 heartbeat가 재확인/보정한다.
+    # 상태 배지가 즉시 갱신되도록 발급 흐름에 포함. SSE publish는 생략(broker=None).
+    host = await db.get(Host, reservation.host_id)
+    if host is not None:
+        await transition_host(
+            db, host, "IN_USE", reason="instant_use", broker=None, now=datetime.now(UTC)
+        )
     await db.commit()
     return response
 
@@ -193,11 +202,24 @@ async def cancel_reservation_endpoint(
     user: User = Depends(get_current_user),
 ) -> Response:
     try:
-        await reservation_service.cancel_reservation(db, user, reservation_id)
+        reservation = await reservation_service.cancel_reservation(db, user, reservation_id)
     except (ReservationNotFoundError, NotOwnerError) as exc:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="예약을 찾을 수 없습니다"
         ) from exc
+    # 취소 후 호스트에 활성 예약이 없고 IN_USE면 IDLE로 복귀 — 즉시 사용→IN_USE 전이의
+    # 대칭 짝. 정상 경로는 다음 heartbeat가 재평가하나, 상태 배지/가용 목록이 즉시 갱신되게 한다.
+    # DEGRADED/OFFLINE은 메트릭·heartbeat 주도라 건드리지 않는다.
+    host = await db.get(Host, reservation.host_id)
+    if host is not None and host.status == "IN_USE":
+        now = datetime.now(UTC)
+        active = await reservation_service.get_active_reservation_for_host(
+            db, host.id, at_time=now
+        )
+        if active is None:
+            await transition_host(
+                db, host, "IDLE", reason="reservation_canceled", broker=None, now=now
+            )
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 

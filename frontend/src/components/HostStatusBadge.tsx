@@ -10,7 +10,7 @@ import clsx from 'clsx';
 const STATUS_META: Record<string, { label: string; dot: string; text: string }> = {
   IDLE: { label: '대기 중', dot: 'bg-emerald-500', text: 'text-emerald-700' },
   IN_USE: { label: '사용 중', dot: 'bg-blue-500', text: 'text-blue-700' },
-  DEGRADED: { label: '성능 저하', dot: 'bg-amber-500', text: 'text-amber-700' },
+  DEGRADED: { label: '점검 중', dot: 'bg-amber-500', text: 'text-amber-700' },
   OFFLINE: { label: '오프라인', dot: 'bg-rose-500', text: 'text-rose-700' },
 };
 

@@ -216,12 +216,18 @@
 ### T10. Sunshine 인증 확장 (Token + 자동 PIN 모드)
 - 카테고리: 기타 (Host)
 - 의존성: 없음
+- 상태: **구현 완료 / 빌드 검증 대기 (2026-05-19)** — Sunshine 포크(`D:/Hongsun/Sunshine`, `KITOHSY/Sunshine`)에 코드 변경 + 패치 시리즈 export 완료. `src/` 3파일 +44줄(`config.h`/`config.cpp` `broker_api_token` 키, `confighttp.cpp` `authenticate()` Bearer 경로 + 상수시간 비교 헬퍼). 패치 브랜치 `smartclassroom/t10-token-pin`(태그 `v2025.628.4510` 기준), `git format-patch` 2건 → `host-patches/sunshine/`. Windows 빌드·런타임 curl 검증은 사용자 환경(`BUILD.md`) — 빌드 환경(MSYS2) 미설치 상태라 빌드는 안내로 위임.
+- 결정 사항 (2026-05-19):
+  - **인증 모델 = 정적 호스트별 시크릿 (A안)** — `sunshine.conf`의 신규 키 `broker_api_token`에 Broker가 호스트마다 발급한 정적 시크릿을 두고, 들어온 `Authorization: Bearer <token>`을 상수시간 비교. 네트워크 콜백 없음 → "T10 의존성: 없음"과 일치, Broker 장애와 무관. T11 `agent.yaml` agent 토큰과 같은 프로비저닝 모델(인스톨러 주입). 키 미설정 시 Bearer 경로 비활성 → 기존 Basic Auth 100% 유지. IP-origin 게이트는 Bearer에도 그대로 적용.
+  - **예약별 connect 토큰의 동적 검증은 T08 위임** — Sunshine이 받은 토큰을 Broker `POST /tokens/verify`로 되묻는 콜백 방식(B안)은 Broker 의존 + `/tokens/verify` 내부 인증(§11 A6, 현재 `require_admin`) 선결이 필요 → T08(자동 페어링)이 호출자가 될 때 같은 패치 시리즈에 후속 패치로 추가. A·B는 상호 배타 아님.
+  - **PIN 자동 입력 = Bearer 인증으로 자연 해소 (Level 1)** — `savePin()`(`POST /api/pin`)은 `authenticate()`만 통과하면 머신 호출 가능 → Bearer 경로가 곧 헤드리스 호출 능력. `/api/pin` 핸들러 자체는 무변경. 페어링 introspection API·시스템 트레이 알림 억제는 비범위(필요 시 T08). 알려진 v1 한계: `nvhttp::pin()`은 `map_id_sess` 첫 엔트리만 대상 → 호스트당 동시 페어링 1건만 정확(강의실 PC 1대=Sunshine 1개라 수용).
+  - **핀 태그 = `v2025.628.4510`** — 현 체크아웃 최근접 업스트림 릴리스 태그. fork 차이는 `host-patches/sunshine/`의 번호 붙은 `.patch` 시리즈로 관리(`client-patches/` T13/T14와 대칭). 업스트림 추적 주기·담당자는 §11 "fork 유지보수"/T20.
 - 완료 조건
-  - [ ] `src/confighttp.cpp` 의 Basic Auth 외에 Bearer Token 인증 경로 추가
-  - [ ] Broker 발급 토큰을 검증하는 옵션 (`sunshine.conf` 의 신규 키)
-  - [ ] PIN 자동 입력 흐름: 외부에서 `POST /api/pin` 호출 시 사용자 GUI 개입 없이 처리되도록 검증
-  - [ ] 업스트림 버전 핀(pinned tag) 명시 + fork 차이를 패치 시리즈로 관리, Win/Linux 빌드 검증
-- 산출물: Sunshine 패치셋 + 빌드 산출물(Win/Linux)
+  - [x] `src/confighttp.cpp` 의 Basic Auth 외에 Bearer Token 인증 경로 추가
+  - [x] Broker 발급 토큰을 검증하는 옵션 (`sunshine.conf` 의 신규 키 `broker_api_token`)
+  - [x] PIN 자동 입력 흐름: Bearer 인증으로 `POST /api/pin` 헤드리스 호출 가능 (런타임 curl 검증은 `BUILD.md` §5 — 사용자 빌드 후)
+  - [x] 업스트림 버전 핀(`v2025.628.4510`) 명시 + fork 차이를 패치 시리즈로 관리 — [-] Win/Linux 빌드 검증은 사용자 환경 위임(`BUILD.md`)
+- 산출물: Sunshine 포크 패치 브랜치 `smartclassroom/t10-token-pin` (커밋 `590f7c8a` config 키, `96ce0ea7` Bearer 경로) + `host-patches/sunshine/`(패치 2건 + `README.md` + `BUILD.md`). 빌드 산출물(Win/Linux)은 사용자 환경.
 
 ### T11. 호스트 상태 보고 에이전트
 - 카테고리: 기타 (Host)

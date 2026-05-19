@@ -1,0 +1,81 @@
+From 96ce0ea79d3d409c364e41706f1db4aa8bc72678 Mon Sep 17 00:00:00 2001
+From: KITOHSY <hongsun900912@gmail.com>
+Date: Tue, 19 May 2026 14:46:51 +0900
+Subject: [PATCH 2/2] T10: add Bearer token authentication path to confighttp
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+SmartClassroom T10 — Sunshine auth extension. authenticate() now accepts
+`Authorization: Bearer <token>` in addition to Basic Auth: the token is
+compared in constant time against `broker_api_token` from sunshine.conf.
+
+This lets the SmartClassroom Broker call the config API headlessly
+(notably POST /api/pin for automated Moonlight pairing) without the
+per-host admin username/password. The IP-origin gate is unchanged and
+still applies. With no `broker_api_token` configured the Bearer path is
+inert, so Basic Auth behaviour is unaffected.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ src/confighttp.cpp | 37 +++++++++++++++++++++++++++++++++++++
+ 1 file changed, 37 insertions(+)
+
+diff --git a/src/confighttp.cpp b/src/confighttp.cpp
+index 059b6242..db1faebe 100644
+--- a/src/confighttp.cpp
++++ b/src/confighttp.cpp
+@@ -129,6 +129,27 @@ namespace confighttp {
+     response->write(SimpleWeb::StatusCode::redirection_temporary_redirect, headers);
+   }
+ 
++  /**
++   * @brief Constant-time string comparison for auth-token matching.
++   *
++   * Avoids a timing oracle on the secret's contents. The length check is not
++   * constant-time, but the token length is not itself sensitive (fixed-length
++   * random secret).
++   * @param a First string.
++   * @param b Second string.
++   * @return True if the strings are equal.
++   */
++  bool constant_time_equals(const std::string &a, const std::string &b) {
++    if (a.size() != b.size()) {
++      return false;
++    }
++    volatile unsigned char diff = 0;
++    for (std::size_t i = 0; i < a.size(); ++i) {
++      diff |= static_cast<unsigned char>(a[i]) ^ static_cast<unsigned char>(b[i]);
++    }
++    return diff == 0;
++  }
++
+   /**
+    * @brief Authenticate the user.
+    * @param response The HTTP response object.
+@@ -161,6 +182,22 @@ namespace confighttp {
+     }
+ 
+     auto &rawAuth = auth->second;
++
++    // SmartClassroom T10: Broker machine-to-machine auth via a static Bearer
++    // token. When the host is provisioned with `broker_api_token` in
++    // sunshine.conf, an `Authorization: Bearer <token>` request authenticates
++    // by constant-time comparison against that token -- no username/password
++    // needed. This enables headless calls such as POST /api/pin. The IP-origin
++    // gate above still applies; an empty key keeps this path disabled.
++    if (rawAuth.rfind("Bearer "sv, 0) == 0) {
++      const auto &expected = config::sunshine.broker_api_token;
++      if (!expected.empty() && constant_time_equals(rawAuth.substr("Bearer "sv.length()), expected)) {
++        fg.disable();
++        return true;
++      }
++      return false;  // Bearer scheme with a missing/invalid token -> 401
++    }
++
+     auto authData = SimpleWeb::Crypto::Base64::decode(rawAuth.substr("Basic "sv.length()));
+ 
+     int index = authData.find(':');
+-- 
+2.54.0.windows.1
+

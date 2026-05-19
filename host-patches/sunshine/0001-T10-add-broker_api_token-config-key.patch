@@ -1,0 +1,53 @@
+From 590f7c8a2416f5d29dd10db81457554e88cf558e Mon Sep 17 00:00:00 2001
+From: KITOHSY <hongsun900912@gmail.com>
+Date: Tue, 19 May 2026 14:45:37 +0900
+Subject: [PATCH 1/2] T10: add broker_api_token config key
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+SmartClassroom T10 — Sunshine auth extension. Adds a `broker_api_token`
+key to sunshine.conf, holding a static per-host secret issued by the
+SmartClassroom Broker. Empty by default (feature disabled).
+
+The Bearer authentication path in confighttp that consumes this key
+follows in the next commit.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ src/config.cpp | 3 +++
+ src/config.h   | 4 ++++
+ 2 files changed, 7 insertions(+)
+
+diff --git a/src/config.cpp b/src/config.cpp
+index 6d999719..d7c5a77b 100644
+--- a/src/config.cpp
++++ b/src/config.cpp
+@@ -1154,6 +1154,9 @@ namespace config {
+     config::sunshine.credentials_file = config::nvhttp.file_state;
+     path_f(vars, "credentials_file", config::sunshine.credentials_file);
+ 
++    // SmartClassroom T10: static Bearer token for Broker machine-to-machine auth.
++    string_f(vars, "broker_api_token", config::sunshine.broker_api_token);
++
+     string_f(vars, "external_ip", nvhttp.external_ip);
+     list_prep_cmd_f(vars, "global_prep_cmd", config::sunshine.prep_cmds);
+ 
+diff --git a/src/config.h b/src/config.h
+index 2e088ea7..a367d0ca 100644
+--- a/src/config.h
++++ b/src/config.h
+@@ -241,6 +241,10 @@ namespace config {
+     std::string password;
+     std::string salt;
+ 
++    // SmartClassroom T10: static Bearer token for Broker machine-to-machine
++    // calls to the config API (e.g. headless POST /api/pin). Empty = disabled.
++    std::string broker_api_token;
++
+     std::string config_file;
+ 
+     struct cmd_t {
+-- 
+2.54.0.windows.1
+

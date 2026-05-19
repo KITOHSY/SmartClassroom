@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 SmartClassroom은 충남대 강의실 PC 원격 접속 플랫폼의 Broker 백엔드다 (Sunshine 호스트 + Moonlight 클라이언트 + Broker 오케스트레이터). 제품 정의는 `PRD.md`, 실행 계획과 태스크별 상태는 `EXP.md`에 있으며 둘 다 작업 범위를 잡을 때의 근거다. 코드·커밋 메시지 곳곳에서 `T03`, `T04a`, `T05` 같은 태스크 ID를 인용하므로 논의 단위로 그대로 사용한다.
 
-레포는 모노레포다. `broker/` (FastAPI 백엔드) + `frontend/` (T16 React+Vite+TS 프런트엔드) + `agent/` (T11 호스트 에이전트 사이드카, Python+uv). 향후 `client-patches/` (T13/T14 Moonlight fork)가 형제로 합류한다. `broker/` / `frontend/` / `agent/` 가 각자 루트라는 전제로 파일을 위로 끌어올리지 말 것.
+레포는 모노레포다. `broker/` (FastAPI 백엔드) + `frontend/` (T16 React+Vite+TS 프런트엔드) + `agent/` (T11 호스트 에이전트 사이드카, Python+uv) + `host-patches/sunshine/` (T10 — Sunshine 호스트 포크 패치 시리즈, 아래 "Sunshine 호스트 포크" 절 참조). 향후 `client-patches/` (T13/T14 Moonlight fork)가 형제로 합류한다. `broker/` / `frontend/` / `agent/` 가 각자 루트라는 전제로 파일을 위로 끌어올리지 말 것.
 
 ## 자주 쓰는 명령어
 
@@ -222,8 +222,18 @@ T05 `starts_at >= now` 정책 때문에 **NOW를 덮는 활성 예약은 service
 
 `alembic check`가 CI에 포함되어 있지만, autogenerate는 `EXCLUDE` 제약 / JSONB `server_default` / 부분 인덱스 / GIN·GIST 인덱스를 못 본다. 모델과 마이그레이션이 이쪽에서 어긋나면 autogenerate가 못 잡는 drift가 되므로 마이그레이션을 직접 손으로 보정한다.
 
+### Sunshine 호스트 포크는 `host-patches/`의 패치 시리즈로 관리 (T10)
+
+강의실 PC의 Sunshine 호스트는 업스트림이 아니라 SmartClassroom 포크를 쓴다. 포크 소스 자체는 이 레포에 두지 않고, **업스트림 고정 태그 위에 순서대로 적용하는 번호 붙은 `.patch` 시리즈**(`host-patches/sunshine/`)로만 관리한다:
+
+- 포크 체크아웃: `D:/Hongsun/Sunshine`, origin `KITOHSY/Sunshine`, 패치 브랜치 `smartclassroom/t10-token-pin`, 고정 업스트림 태그 `v2025.628.4510`.
+- 적용: 클린 클론에 `git am host-patches/sunshine/*.patch`. 재생성: `git format-patch <태그>..HEAD -o host-patches/sunshine -- src/` — `-- src/` 경로 한정이 핵심으로, CI 워크플로 커밋이 패치 시리즈에 섞이지 않게 한다.
+- T10이 첫 시리즈(`sunshine.conf`의 `broker_api_token` 키 + `confighttp` Bearer 인증 경로). 패치 0003/0004는 빌드 보정 — autogenerate 같은 자동화가 없으므로 멤버 추가 시 aggregate initializer 동기화 등은 수동으로 챙긴다. Windows 빌드·검증 절차와 환경 전제(MSYS2 UCRT64, Boost 1.87 강제, 설치본 `SunshineService` 포트 충돌, Bearer 검증 전 관리자 자격증명 1회 설정 필요)는 `host-patches/sunshine/BUILD.md`, 패치 목록은 같은 폴더 `README.md`.
+- T08 자동 페어링이 connect 토큰 동적 검증(`/tokens/verify` 콜백, §11 A6)을 **같은 시리즈에 후속 패치**로 추가할 예정 — 새 패치도 같은 번호 규칙. `client-patches/` (T13/T14 Moonlight fork)도 동일 패턴으로 합류한다.
+
 ## 헷갈릴 때 참조
 
 - `PRD.md` — 제품이 무엇이고 무엇이 아닌지.
 - `EXP.md` — 어떤 작업이 어떤 순서·의존성으로 계획되어 있는지. 크리티컬 패스는 `§0`. 태스크를 마칠 때 여기에 상태를 갱신한다.
 - `README.md` — Quickstart, 관측성 카탈로그 (메트릭 이름, 헤더, 환경 변수).
+- `host-patches/sunshine/README.md` · `BUILD.md` — Sunshine 호스트 포크 패치 목록과 Windows 빌드·검증 절차.

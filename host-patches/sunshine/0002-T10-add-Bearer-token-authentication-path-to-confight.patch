@@ -1,7 +1,7 @@
 From 96ce0ea79d3d409c364e41706f1db4aa8bc72678 Mon Sep 17 00:00:00 2001
 From: KITOHSY <hongsun900912@gmail.com>
 Date: Tue, 19 May 2026 14:46:51 +0900
-Subject: [PATCH 2/2] T10: add Bearer token authentication path to confighttp
+Subject: [PATCH 2/4] T10: add Bearer token authentication path to confighttp
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit

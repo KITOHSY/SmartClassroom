@@ -49,6 +49,10 @@ git submodule update --init --recursive
 
 (깨끗한 클론은 `README.md`의 "적용 방법" — `git am *.patch` 참조.)
 
+패치 시리즈에는 `input.cpp`의 MinGW synthetic-pointer 선언 가드(0004)가 포함돼 있어
+최신 UCRT64 SDK에서 발생하는 `redefinition of 'HSYNTHETICPOINTERDEVICE__'` 에러를
+막는다 — 별도 조치는 필요 없다.
+
 ## 4. stale 캐시 폐기 + 구성·빌드
 
 ```bash
@@ -58,8 +62,9 @@ cmake -B build -G Ninja -S .
 ninja -C build
 ```
 
-첫 빌드는 의존성 컴파일로 수십 분 소요된다. T10 변경은 `src/config.*` /
-`src/confighttp.cpp` 3파일뿐이라, 이후 증분 재빌드는 빠르다.
+첫 빌드는 의존성 컴파일로 수십 분 소요된다. 패치 변경은 `src/config.*` /
+`src/confighttp.cpp` / `src/platform/windows/input.cpp` 4파일뿐이라, 이후 증분
+재빌드는 빠르다.
 
 ## 5. T10 기능 검증
 

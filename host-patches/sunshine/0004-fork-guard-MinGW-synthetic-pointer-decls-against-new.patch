@@ -1,0 +1,38 @@
+From f07470c5aaea3d286d20077632a911f33287b756 Mon Sep 17 00:00:00 2001
+From: KITOHSY <hongsun900912@gmail.com>
+Date: Tue, 19 May 2026 23:55:34 +0900
+Subject: [PATCH 4/4] fork: guard MinGW synthetic-pointer decls against newer
+ UCRT64 SDK
+
+input.cpp manually declared HSYNTHETICPOINTERDEVICE and the synthetic
+pointer device functions under #ifdef __MINGW32__. Newer MSYS2 UCRT64
+winuser.h already declares them when NTDDI_VERSION >= NTDDI_WIN10_RS5,
+causing a redefinition error. Mirror the SDK's own guard so the manual
+declaration only fires on older toolchains. Toolchain-compat fix,
+unrelated to T10 auth scope.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ src/platform/windows/input.cpp | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/src/platform/windows/input.cpp b/src/platform/windows/input.cpp
+index 50f8aab8..706380c8 100644
+--- a/src/platform/windows/input.cpp
++++ b/src/platform/windows/input.cpp
+@@ -22,7 +22,11 @@
+ #include "src/logging.h"
+ #include "src/platform/common.h"
+ 
+-#ifdef __MINGW32__
++// SmartClassroom fork: newer MSYS2 UCRT64 winuser.h already declares these
++// when NTDDI_VERSION >= NTDDI_WIN10_RS5. Only declare them ourselves when the
++// SDK does not, mirroring the SDK's own guard. (HSYNTHETICPOINTERDEVICE is a
++// typedef, not a macro, so #ifndef on it cannot work as a guard.)
++#if defined(__MINGW32__) && (NTDDI_VERSION < NTDDI_WIN10_RS5)
+ DECLARE_HANDLE(HSYNTHETICPOINTERDEVICE);
+ WINUSERAPI HSYNTHETICPOINTERDEVICE WINAPI CreateSyntheticPointerDevice(POINTER_INPUT_TYPE pointerType, ULONG maxCount, POINTER_FEEDBACK_MODE mode);
+ WINUSERAPI BOOL WINAPI InjectSyntheticPointerInput(HSYNTHETICPOINTERDEVICE device, CONST POINTER_TYPE_INFO *pointerInfo, UINT32 count);
+-- 
+2.54.0.windows.1
+

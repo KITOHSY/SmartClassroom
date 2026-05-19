@@ -18,8 +18,18 @@ SmartClassroom 포크가 Sunshine 게임 스트리밍 호스트에 적용하는 
 |---|------|------|-----------|
 | 0001 | `0001-T10-add-broker_api_token-config-key.patch` | `sunshine.conf`에 `broker_api_token` 키 추가 | `src/config.h`, `src/config.cpp` |
 | 0002 | `0002-T10-add-Bearer-token-authentication-path-to-confight.patch` | `confighttp` `authenticate()`에 Bearer 토큰 인증 경로 추가 | `src/confighttp.cpp` |
+| 0003 | `0003-T10-fix-sunshine_t-aggregate-initializer-missing-bro.patch` | `config.cpp`의 `sunshine_t` aggregate initializer에 `broker_api_token` 슬롯 추가 (0001 보정) | `src/config.cpp` |
+| 0004 | `0004-fork-guard-MinGW-synthetic-pointer-decls-against-new.patch` | MinGW synthetic-pointer 선언을 최신 UCRT64 SDK와 충돌 안 하게 가드 (toolchain 호환, T10 인증과 무관) | `src/platform/windows/input.cpp` |
 
-합계 `src/` 3파일 / +44줄. 플랫폼 독립적 — Win/Linux 공통.
+합계 `src/` 4파일 / +50줄, −1줄. 플랫폼 독립적 — Win/Linux 공통.
+
+0003은 0001이 `config.h`의 `struct sunshine_t`에 멤버를 추가하면서 `config.cpp`의
+초기화 목록을 갱신하지 않아 생긴 빌드 에러(`47989`를 `std::string`으로 변환 불가)를
+보정한다 — 본래 0001과 한 커밋이어야 했으나, 이미 push된 커밋을 보존하기 위해 별도
+커밋으로 분리했다. 0004는 T10 인증 변경이 아니라 **빌드 호환** 패치다: 업스트림이
+구버전 MinGW 헤더를 가정해 `HSYNTHETICPOINTERDEVICE`를 수동 선언하는데, 최신 MSYS2
+UCRT64 `winuser.h`가 같은 심볼을 이미 선언해 중복 정의 에러가 난다. 시리즈에서 빠지면
+클린 `git am *.patch` 후 빌드가 다시 실패하므로 시리즈에 포함한다.
 
 ## 무엇을 / 왜 (T10)
 

@@ -1,0 +1,32 @@
+From 96f7f757746fef303d59d4967bb220f5ac68bd4f Mon Sep 17 00:00:00 2001
+From: KITOHSY <hongsun900912@gmail.com>
+Date: Tue, 19 May 2026 23:55:26 +0900
+Subject: [PATCH 3/4] T10: fix sunshine_t aggregate initializer (missing
+ broker_api_token slot)
+
+Patch 0001 added the broker_api_token member to struct sunshine_t in
+config.h but left the aggregate initializer in config.cpp unchanged, so
+every element from config_file onward shifted by one slot and port 47989
+landed on a std::string field. Add the missing {} slot. Corrects the
+omission in 590f7c8a.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
+---
+ src/config.cpp | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/src/config.cpp b/src/config.cpp
+index d7c5a77b..e493de54 100644
+--- a/src/config.cpp
++++ b/src/config.cpp
+@@ -570,6 +570,7 @@ namespace config {
+     {},  // Username
+     {},  // Password
+     {},  // Password Salt
++    {},  // broker_api_token (T10)
+     platf::appdata().string() + "/sunshine.conf",  // config file
+     {},  // cmd args
+     47989,  // Base port number
+-- 
+2.54.0.windows.1
+

@@ -58,9 +58,15 @@ git submodule update --init --recursive
 ```bash
 cd /d/Hongsun/Sunshine
 rm -rf build
-cmake -B build -G Ninja -S .
+cmake -B build -G Ninja -S . -DFETCHCONTENT_SOURCE_DIR_BOOST=/d/Hongsun/boost-1.87.0
 ninja -C build
 ```
+
+Sunshine CMake는 **Boost 1.87**을 강제한다 (`FetchContent`로 특정 버전 고정).
+네트워크로 매번 받지 않으려면 Boost 1.87 소스를 별도 폴더에 미리 받아 두고
+`-DFETCHCONTENT_SOURCE_DIR_BOOST=<경로>`로 그 폴더를 가리킨다 — 이 환경에서는
+`D:/Hongsun/boost-1.87.0`에 받아 두었다. 이 플래그를 빼면 `FetchContent`가 Boost
+1.87을 직접 다운로드한다(느리고 네트워크 의존).
 
 첫 빌드는 의존성 컴파일로 수십 분 소요된다. 패치 변경은 `src/config.*` /
 `src/confighttp.cpp` / `src/platform/windows/input.cpp` 4파일뿐이라, 이후 증분

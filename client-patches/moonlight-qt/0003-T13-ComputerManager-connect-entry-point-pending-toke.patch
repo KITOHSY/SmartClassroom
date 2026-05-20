@@ -1,0 +1,386 @@
+From 46fe3fc4893720a21a896af9fc483d90b162ff1f Mon Sep 17 00:00:00 2001
+From: KITOHSY <hongsun900912@gmail.com>
+Date: Wed, 20 May 2026 10:05:03 +0900
+Subject: [PATCH 3/6] T13: ComputerManager connect entry point + pending token
+ bookkeeping
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+SmartClassroom T13 — wires the moonlight:// URL plumbing from the previous
+patch into a concrete handler that auto-adds the target host and stamps
+the broker-issued token/host-id onto the resulting NvComputer.
+
+  * NvComputer gains two ephemeral fields, pendingConnectToken and
+    pendingHostId. They are not in the serialize/isEqualSerialized path
+    because the raw token is short-lived (expires with the reservation
+    window) and writing it to QSettings on disk would leak it.
+
+  * ComputerManager exposes requestConnect(address, port, token, hostId),
+    which (a) stamps the fields directly if the host is already in
+    m_KnownHosts under any of its addresses, or (b) queues the (token,
+    hostId) under "ip:port" in m_PendingTokensByAddress and calls
+    addNewHost(...). The existing handleComputerStateChanged path then
+    drains the queue once polling resolves the new host.
+
+  * A static stashPendingConnect() handles the bootstrap timing problem:
+    main.cpp's ConnectRequested switch arm runs before QML constructs
+    ComputerManager via its singleton lambda, so stash queues into a
+    static list while no instance exists, and the ComputerManager
+    constructor flushes the static queue onto the live instance. Once
+    constructed, stashPendingConnect routes straight through.
+
+  * main.cpp's ConnectRequested arm and the QDesktopServices URL handler
+    now both feed ComputerManager::stashPendingConnect via a shared
+    scT13DispatchMoonlightUrl() helper. The forwarded-URL path from the
+    single-instance receiver loops through QDesktopServices::openUrl so
+    it lands in the same handler.
+
+NvHTTP Bearer header injection and PIN/cert auto-fill — what actually
+gets the user to "0 inputs" — are T14 and consume these pendingConnectToken
+/ pendingHostId fields from there. T13 only carries them.
+---
+ app/backend/computermanager.cpp | 145 ++++++++++++++++++++++++++++++++
+ app/backend/computermanager.h   |  33 ++++++++
+ app/backend/nvcomputer.h        |   8 ++
+ app/main.cpp                    |  54 +++++++++---
+ 4 files changed, 230 insertions(+), 10 deletions(-)
+
+diff --git a/app/backend/computermanager.cpp b/app/backend/computermanager.cpp
+index 7e03d61d..90584b3c 100644
+--- a/app/backend/computermanager.cpp
++++ b/app/backend/computermanager.cpp
+@@ -144,6 +144,11 @@ private:
+     NvComputer* m_Computer;
+ };
+ 
++// SmartClassroom T13 — static pending-connect bookkeeping.
++QMutex ComputerManager::s_StashedConnectsLock;
++QList<ComputerManager::PendingConnect> ComputerManager::s_StashedConnects;
++QPointer<ComputerManager> ComputerManager::s_ActiveInstance;
++
+ ComputerManager::ComputerManager(StreamingPreferences* prefs)
+     : m_Prefs(prefs),
+       m_PollingRef(0),
+@@ -184,10 +189,21 @@ ComputerManager::ComputerManager(StreamingPreferences* prefs)
+     // while quitting, however this is a one time signal - additional
+     // requests would not be aborted and block termination.
+     connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, this, &ComputerManager::handleAboutToQuit);
++
++    // SmartClassroom T13 — claim the active-instance slot and drain any
++    // connect requests stashed by main.cpp before this instance existed.
++    s_ActiveInstance = this;
++    flushStashedConnects();
+ }
+ 
+ ComputerManager::~ComputerManager()
+ {
++    // SmartClassroom T13 — release the active-instance slot so any
++    // subsequent stashPendingConnect calls fall back to the static queue.
++    if (s_ActiveInstance.data() == this) {
++        s_ActiveInstance.clear();
++    }
++
+     // Stop the delayed flush thread before acquiring the lock in write mode
+     // to avoid deadlocking with a flush that needs the lock in read mode.
+     {
+@@ -463,10 +479,139 @@ void ComputerManager::handleComputerStateChanged(NvComputer* computer)
+         emit quitAppCompleted(QVariant());
+     }
+ 
++    // SmartClassroom T13 — if we auto-added this host for a moonlight://
++    // connect URL, stamp the broker token/host-id on it now that polling
++    // has resolved its addresses.
++    onPendingConnectStateChanged(computer);
++
+     // Save updates to this host
+     saveHost(computer);
+ }
+ 
++QString ComputerManager::pendingConnectKey(const QString& address, int port)
++{
++    return QStringLiteral("%1:%2").arg(address).arg(port);
++}
++
++void ComputerManager::stashPendingConnect(QString address, int port,
++                                          QString connectToken, int hostId)
++{
++    QMutexLocker lock(&s_StashedConnectsLock);
++    if (!s_ActiveInstance.isNull()) {
++        ComputerManager* inst = s_ActiveInstance.data();
++        lock.unlock();
++        // Active instance lives on the main thread (QML singleton lambda is
++        // invoked there), and T13 callers (main.cpp ConnectRequested arm and
++        // the QDesktopServices URL handler) are also on the main thread, so
++        // a direct call is safe.
++        inst->requestConnect(address, port, connectToken, hostId);
++        return;
++    }
++    s_StashedConnects.append(PendingConnect{address, port, connectToken, hostId});
++}
++
++void ComputerManager::flushStashedConnects()
++{
++    QList<PendingConnect> drained;
++    {
++        QMutexLocker lock(&s_StashedConnectsLock);
++        drained = s_StashedConnects;
++        s_StashedConnects.clear();
++    }
++    for (const PendingConnect& pc : drained) {
++        requestConnect(pc.address, pc.port, pc.connectToken, pc.hostId);
++    }
++}
++
++void ComputerManager::requestConnect(QString address, int port,
++                                     QString connectToken, int hostId)
++{
++    if (address.isEmpty()) {
++        qWarning() << "T13: requestConnect called with empty address — ignoring";
++        return;
++    }
++    if (port <= 0) {
++        port = DEFAULT_HTTP_PORT;
++    }
++
++    // First pass: see if we already know this host by any of its addresses.
++    NvComputer* matched = nullptr;
++    {
++        QReadLocker lock(&m_Lock);
++        for (NvComputer* c : m_KnownHosts) {
++            QReadLocker cLock(&c->lock);
++            auto matchesAddr = [&](const NvAddress& a) {
++                return !a.isNull() && a.address() == address;
++            };
++            if (matchesAddr(c->manualAddress) || matchesAddr(c->localAddress) ||
++                matchesAddr(c->remoteAddress) || matchesAddr(c->ipv6Address) ||
++                matchesAddr(c->activeAddress)) {
++                matched = c;
++                break;
++            }
++        }
++    }
++    if (matched != nullptr) {
++        QWriteLocker cLock(&matched->lock);
++        matched->pendingConnectToken = connectToken;
++        matched->pendingHostId = hostId;
++        qInfo() << "T13: stamped pending connect on known host" << matched->name;
++        return;
++    }
++
++    // Otherwise queue the token for the address and trigger an addNewHost.
++    {
++        QMutexLocker lock(&m_PendingConnectLock);
++        PendingConnect pc{address, port, connectToken, hostId};
++        m_PendingTokensByAddress[pendingConnectKey(address, port)] = pc;
++    }
++    qInfo() << "T13: requesting addNewHost for" << address << "port" << port
++            << "host-id=" << hostId;
++    addNewHost(NvAddress(address, static_cast<uint16_t>(port)), false);
++}
++
++void ComputerManager::onPendingConnectStateChanged(NvComputer* computer)
++{
++    if (computer == nullptr) {
++        return;
++    }
++    QStringList candidateKeys;
++    {
++        QReadLocker cLock(&computer->lock);
++        auto appendKey = [&](const NvAddress& a) {
++            if (!a.isNull()) {
++                candidateKeys.append(pendingConnectKey(a.address(), a.port()));
++            }
++        };
++        appendKey(computer->manualAddress);
++        appendKey(computer->localAddress);
++        appendKey(computer->remoteAddress);
++        appendKey(computer->ipv6Address);
++        appendKey(computer->activeAddress);
++    }
++    PendingConnect found;
++    bool foundOne = false;
++    {
++        QMutexLocker lock(&m_PendingConnectLock);
++        for (const QString& key : candidateKeys) {
++            auto it = m_PendingTokensByAddress.find(key);
++            if (it != m_PendingTokensByAddress.end()) {
++                found = it.value();
++                foundOne = true;
++                m_PendingTokensByAddress.erase(it);
++                break;
++            }
++        }
++    }
++    if (foundOne) {
++        QWriteLocker cLock(&computer->lock);
++        computer->pendingConnectToken = found.connectToken;
++        computer->pendingHostId = found.hostId;
++        qInfo() << "T13: stamped pending connect on host" << computer->name
++                << "after polling resolved it";
++    }
++}
++
+ QVector<NvComputer*> ComputerManager::getComputers()
+ {
+     QReadLocker lock(&m_Lock);
+diff --git a/app/backend/computermanager.h b/app/backend/computermanager.h
+index 91881592..14264bbf 100644
+--- a/app/backend/computermanager.h
++++ b/app/backend/computermanager.h
+@@ -17,6 +17,7 @@
+ #include <QTimer>
+ #include <QMutex>
+ #include <QWaitCondition>
++#include <QPointer>
+ 
+ class ComputerManager;
+ 
+@@ -245,6 +246,20 @@ public:
+ 
+     void clientSideAttributeUpdated(NvComputer* computer);
+ 
++    // SmartClassroom T13 — moonlight:// connect entry point. If `address` is
++    // already in m_KnownHosts the broker token / host-id are stamped on the
++    // matching NvComputer immediately; otherwise addNewHost is invoked and
++    // the (token, hostId) are stashed in m_PendingTokensByAddress so the
++    // computerStateChanged callback below can stamp them once polling
++    // resolves the host.
++    void requestConnect(QString address, int port, QString connectToken, int hostId);
++
++    // Stash a connect request received before any ComputerManager instance
++    // exists. main.cpp calls this from the ConnectRequested switch arm; the
++    // QML singleton lambda constructs ComputerManager later, and the
++    // constructor flushes any stashed requests onto the live instance.
++    static void stashPendingConnect(QString address, int port, QString connectToken, int hostId);
++
+ signals:
+     void computerStateChanged(NvComputer* computer);
+ 
+@@ -284,4 +299,22 @@ private:
+     QMutex m_DelayedFlushMutex; // Lock ordering: Must never be acquired while holding NvComputer lock
+     QWaitCondition m_DelayedFlushCondition;
+     bool m_NeedsDelayedFlush;
++
++    // SmartClassroom T13 — moonlight:// pending-connect bookkeeping.
++    struct PendingConnect {
++        QString address;
++        int port;
++        QString connectToken;
++        int hostId;
++    };
++    QMutex m_PendingConnectLock;
++    QMap<QString, PendingConnect> m_PendingTokensByAddress;  // key: "ip:port"
++
++    void flushStashedConnects();
++    void onPendingConnectStateChanged(NvComputer* computer);
++    static QString pendingConnectKey(const QString& address, int port);
++
++    static QMutex s_StashedConnectsLock;
++    static QList<PendingConnect> s_StashedConnects;
++    static QPointer<ComputerManager> s_ActiveInstance;
+ };
+diff --git a/app/backend/nvcomputer.h b/app/backend/nvcomputer.h
+index 3e9c828e..134b3f61 100644
+--- a/app/backend/nvcomputer.h
++++ b/app/backend/nvcomputer.h
+@@ -115,6 +115,14 @@ public:
+     bool isNvidiaServerSoftware;
+     // Remember to update isEqualSerialized() when adding fields here!
+ 
++    // SmartClassroom T13 — pending broker token / host-id from moonlight:// URL.
++    // Ephemeral only; never persisted (raw token on disk would leak it, and
++    // the token expires with the reservation window anyway). T14 will pick
++    // these up to inject `Authorization: Bearer <token>` into NvHTTP and to
++    // pass them through to the pairing flow so the user never sees a PIN.
++    QString pendingConnectToken;
++    int pendingHostId = 0;
++
+     // Synchronization
+     mutable CopySafeReadWriteLock lock;
+ 
+diff --git a/app/main.cpp b/app/main.cpp
+index 3460f990..92fd7a1d 100644
+--- a/app/main.cpp
++++ b/app/main.cpp
+@@ -411,14 +411,43 @@ static QLocalServer* scT13StartSingleInstanceServer(QObject* parent)
+     return server;
+ }
+ 
+-// macOS URL handler — receives QFileOpenEvent via Qt's url handler dispatch.
+-// Receiver-side dispatch into ComputerManager is wired in the follow-up
+-// ComputerManager connect-entry-point patch; v1 stub just logs.
++// Hand a parsed moonlight://connect URL off to ComputerManager. This is the
++// single entry point shared by (a) the macOS QFileOpenEvent handler, (b) the
++// first-instance receiver routing forwarded URLs back through
++// QDesktopServices::openUrl, and (c) the ConnectRequested switch arm below
++// (via the expanded CLI args).
++static void scT13DispatchMoonlightUrl(const QUrl& url)
++{
++    if (!url.isValid() || url.host().compare("connect", Qt::CaseInsensitive) != 0) {
++        qWarning() << "T13: ignoring unrecognized moonlight:// URL:" << url.toString();
++        return;
++    }
++    QUrlQuery q(url);
++    const QString token  = q.queryItemValue("token");
++    const QString host   = q.queryItemValue("host");
++    const QString hostId = q.queryItemValue("host-id");
++    const QString port   = q.queryItemValue("port");
++    if (host.isEmpty()) {
++        qWarning() << "T13: moonlight:// URL missing host parameter:" << url.toString();
++        return;
++    }
++    bool portOk = !port.isEmpty();
++    int portInt = portOk ? port.toInt(&portOk) : 0;
++    bool hostIdOk = !hostId.isEmpty();
++    int hostIdInt = hostIdOk ? hostId.toInt(&hostIdOk) : 0;
++    qInfo() << "T13: dispatching moonlight://connect host=" << host
++            << "port=" << (portOk ? portInt : 0)
++            << "host-id=" << (hostIdOk ? hostIdInt : 0)
++            << "token-prefix=" << token.left(8);
++    ComputerManager::stashPendingConnect(host, portOk ? portInt : 0,
++                                         token, hostIdOk ? hostIdInt : 0);
++}
++
++// macOS QFileOpenEvent + single-instance forward both flow through here.
+ static void scT13RegisterMoonlightUrlHandler()
+ {
+     QDesktopServices::setUrlHandler("moonlight", [](const QUrl& url) {
+-        qInfo() << "T13: moonlight:// URL received:" << url.toString();
+-        // Future patch dispatches into ComputerManager::requestConnect here.
++        scT13DispatchMoonlightUrl(url);
+     });
+ }
+ 
+@@ -933,11 +962,12 @@ int main(int argc, char *argv[])
+     case GlobalCommandLineParser::ConnectRequested:
+         {
+             // SmartClassroom T13 — moonlight:// URL or `connect` CLI entry.
+-            // v1 lands the user on PcView while the host/token are recorded
+-            // for follow-up handling. The actual dispatch into ComputerManager
+-            // (host auto-add + pending-token storage) is wired in the next
+-            // patch in this series; this case stays a logging stub so the
+-            // build is clean even when only the URL plumbing is applied.
++            // Lands on PcView while the host/token are handed off to
++            // ComputerManager. ComputerManager auto-adds the host if it's
++            // not already known and stamps the broker token / host-id on
++            // the resulting NvComputer (T14 will inject the token into the
++            // NvHTTP Bearer header so pairing/streaming proceed without a
++            // user-entered PIN).
+             initialView = "qrc:/gui/PcView.qml";
+             ConnectCommandLineParser connectParser;
+             connectParser.parse(scT13ProcessedArgs);
+@@ -945,6 +975,10 @@ int main(int argc, char *argv[])
+                     << "port=" << connectParser.getPort()
+                     << "host-id=" << connectParser.getHostId()
+                     << "token-prefix=" << connectParser.getConnectToken().left(8);
++            ComputerManager::stashPendingConnect(connectParser.getHost(),
++                                                 connectParser.getPort(),
++                                                 connectParser.getConnectToken(),
++                                                 connectParser.getHostId());
+             break;
+         }
+     }
+-- 
+2.54.0.windows.1
+

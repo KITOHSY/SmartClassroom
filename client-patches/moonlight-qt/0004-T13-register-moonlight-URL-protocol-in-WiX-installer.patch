@@ -1,0 +1,70 @@
+From 53d83db834adc377c43f0cd16bac1007a89ed54a Mon Sep 17 00:00:00 2001
+From: KITOHSY <hongsun900912@gmail.com>
+Date: Wed, 20 May 2026 10:06:01 +0900
+Subject: [PATCH 4/6] T13: register moonlight:// URL protocol in WiX installer
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+SmartClassroom T13 — adds HKCR\moonlight registry entries so that the
+Windows installer registers Moonlight.exe as the OS-level handler for
+moonlight:// URLs. The SmartClassroom frontend emits
+`moonlight://connect?token=...&host-id=...&host=...&port=...`, and once
+this MSI is installed, clicking such a URL in a browser hands the URL
+to Moonlight.exe as argv[1], where the in-process URL handler (see the
+earlier scT13ExpandMoonlightConnectUrl helper) translates it into the
+`connect` subcommand and dispatches to ComputerManager.
+
+The new MoonlightUrlProtocol component writes:
+  HKCR\moonlight                          (Default) = "URL:Moonlight Protocol"
+  HKCR\moonlight                          URL Protocol = ""
+  HKCR\moonlight\DefaultIcon              (Default) = "<MoonlightExe>,0"
+  HKCR\moonlight\shell\open\command       (Default) = "\"<MoonlightExe>\" \"%1\""
+
+with a stable component GUID so upgrades don't churn the registration.
+Verification: `reg query HKCR\moonlight /s` after MSI install should
+list all four values.
+---
+ wix/Moonlight/Product.wxs | 21 +++++++++++++++++++++
+ 1 file changed, 21 insertions(+)
+
+diff --git a/wix/Moonlight/Product.wxs b/wix/Moonlight/Product.wxs
+index 905ad2b1..d7cebf2a 100644
+--- a/wix/Moonlight/Product.wxs
++++ b/wix/Moonlight/Product.wxs
+@@ -111,11 +111,32 @@
+       <Files Include="$(var.DeployDir)\**" />
+     </ComponentGroup>
+ 
++    <!--
++      SmartClassroom T13 — register the moonlight:// URL scheme so that
++      `moonlight://connect?token=...&host-id=...&host=...&port=...` URLs
++      (issued by the SmartClassroom Broker frontend) launch this binary
++      with the URL as argv[1]. main.cpp's URL handler expands the URL
++      into the `connect` CLI subcommand and dispatches into ComputerManager.
++    -->
++    <Component Id="MoonlightUrlProtocol" Directory="INSTALLFOLDER" Guid="9d0c98a1-3c4f-4f5a-8a7b-2c4d51e7f3a1">
++      <RegistryKey Root="HKCR" Key="moonlight">
++        <RegistryValue Type="string" Value="URL:Moonlight Protocol" KeyPath="yes" />
++        <RegistryValue Name="URL Protocol" Type="string" Value="" />
++      </RegistryKey>
++      <RegistryKey Root="HKCR" Key="moonlight\DefaultIcon">
++        <RegistryValue Type="string" Value="[#MoonlightExe],0" />
++      </RegistryKey>
++      <RegistryKey Root="HKCR" Key="moonlight\shell\open\command">
++        <RegistryValue Type="string" Value="&quot;[#MoonlightExe]&quot; &quot;%1&quot;" />
++      </RegistryKey>
++    </Component>
++
+     <Feature Id="ProductFeature" Title="Moonlight" Level="1" ConfigurableDirectory="INSTALLFOLDER">
+       <ComponentRef Id="Moonlight" />
+       <ComponentRef Id="MoonlightShortcuts" />
+       <ComponentRef Id="MoonlightDesktopShortcutState" />
+       <ComponentRef Id="MoonlightDesktopShortcut" />
++      <ComponentRef Id="MoonlightUrlProtocol" />
+       <ComponentGroupRef Id="MoonlightDependencies" />
+     </Feature>
+ 
+-- 
+2.54.0.windows.1
+

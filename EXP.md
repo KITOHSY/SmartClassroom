@@ -268,12 +268,21 @@
 ### T13. moonlight:// 커스텀 URL 핸들러 + 인자 주입
 - 카테고리: 기타 (Client)
 - 의존성: 없음
+- 상태: **완료 (2026-05-20)** — Moonlight 포크(`D:/Hongsun/moonlight-qt`, `KITOHSY/moonlight-qt`)에 코드 변경 + 패치 시리즈 export 완료. 업스트림 태그 `v6.1.0` (commit `f786e94c`) 기준, 패치 브랜치 `smartclassroom/t13-url-handler`, 6개 커밋: ① `connect` 서브커맨드 CLI 파서(`app/cli/commandlineparser.{h,cpp}`) ② `moonlight://` URL 핸들러 + URL→CLI 확장 + `QLocalServer/QLocalSocket` 단일 인스턴스 forward(`app/main.cpp`) ③ `ComputerManager::requestConnect` + `NvComputer::pendingConnectToken/pendingHostId` 비-영속 멤버(`app/backend/`) ④ Windows WiX `HKCR\moonlight` URL Protocol 등록(`wix/Moonlight/Product.wxs`) ⑤ macOS `Info.plist` `CFBundleURLTypes`(`app/Info.plist`) ⑥ Linux `.desktop` `MimeType=x-scheme-handler/moonlight;`(`app/deploy/linux/`). `git format-patch v6.1.0..HEAD -o client-patches/moonlight-qt -- app/ wix/` 6건 export 완료. **빌드·런타임 검증은 사용자 환경에서 별도** — Qt installer + MSVC 2022 toolchain 설치가 선행. 검증 시나리오 6종(빌드 통과 / `reg query HKCR\moonlight` / 4가지 URL 시나리오)은 `client-patches/moonlight-qt/BUILD.md §5`.
+- 결정 사항 (2026-05-20):
+  - **인증 모델 = 토큰 보관 후 T14로 위임** — T13은 URL을 받아 `NvComputer::pendingConnectToken/pendingHostId`(비-영속 멤버)에 stamp까지만. NvHTTP `Authorization: Bearer <token>` 헤더 주입과 자동 PIN/인증서 주입은 **T14 같은 패치 시리즈에 후속**. T13만 머지된 상태에서는 페어링된 호스트는 통상 stream, 미페어링 호스트는 표준 PIN 입력 화면으로 fall-through — KPI("입력 0개") 미충족이지만 회귀 없음.
+  - **URL 스키마는 프런트 선계약 그대로** — `moonlight://connect?token=<raw>&host-id=<id>&host=<ip>&port=<port>`. `frontend/src/lib/moonlight.ts::buildMoonlightUrl`가 조립. T13 fork가 URL→CLI 확장(`scT13ExpandMoonlightConnectUrl`)으로 `moonlight connect <host> --port <port> --connect-token <token> --host-id <hostId>` 형태로 변환 후 표준 dispatch.
+  - **단일 인스턴스 메커니즘 = `QLocalServer/QLocalSocket`** — 업스트림에 없는 메커니즘이라 직접 도입. named pipe `Moonlight-SingleInstance-v1`. 두 번째 인스턴스가 URL을 보면 첫 인스턴스에 forward 후 `return 0`. 첫 인스턴스가 받은 URL은 `QDesktopServices::openUrl`로 자체 핸들러 재진입 → 일관된 디스패치 경로. CLI 인자(URL 아닌) forward는 v1.1 후속 — KPI 경로는 URL.
+  - **fork 모델 = T10 Sunshine 답습** — `client-patches/moonlight-qt/` 디렉터리(`host-patches/sunshine/`와 형제). `KITOHSY/moonlight-qt` push, `git am *.patch` 적용, `git format-patch -- app/ wix/`로 재생성. 업스트림 추적 주기는 §11 fork 유지보수 / T20.
+  - **빌드 toolchain = MSVC 2022 + Qt 6.5+ (Qt online installer)** — moonlight-qt 업스트림 CI 답습 (`wix/Moonlight.sln`이 MSVC 가정). Sunshine T10의 MSYS2 UCRT64와는 다른 체인. v1 검증은 Windows 우선 — macOS/Linux 인스톨러 패치는 머지하되 검증은 v1.1 후속.
+  - **NvComputer pendingConnect 멤버 = 영속 안 함** — raw token 디스크 노출 + reservation 만료 후 stale 회피. `isEqualSerialized()` / `serialize()` path에서 제외.
+  - **ComputerManager 부트스트랩 정적 스태시** — `main.cpp`의 `ConnectRequested` switch arm은 QML이 ComputerManager 싱글톤을 만들기 *전에* 실행됨 → `static QList<PendingConnect> s_StashedConnects` + `static QPointer<ComputerManager> s_ActiveInstance` 패턴으로 처리. 생성자가 active slot 차지 + 스태시 큐 flush, 소멸자가 slot 해제. 이후 호출은 직접 dispatch.
 - 완료 조건
-  - [ ] `app/main.cpp` 의 GlobalCommandLineParser 확장 — `--connect-token`, `--host-id` 인자 파싱
-  - [ ] OS별 URL 스킴 등록(Windows 레지스트리, macOS Info.plist, Linux .desktop)
-  - [ ] `app/backend/computermanager.cpp` 의 moonlight:// 처리 분기 확장: token/auto-pair 파라미터 수용
-  - [ ] 인스톨러 단계에서 자동 등록(WiX/dmg/AppImage)
-- 산출물: moonlight-qt fork 패치, OS별 인스톨러
+  - [x] `app/main.cpp` 의 GlobalCommandLineParser 확장 — `--connect-token`, `--host-id` 인자 파싱 (0001 + 0002)
+  - [x] OS별 URL 스킴 등록(Windows 레지스트리, macOS Info.plist, Linux .desktop) (0004 + 0005 + 0006)
+  - [x] `app/backend/computermanager.cpp` 의 moonlight:// 처리 분기 확장: token/auto-pair 파라미터 수용 (0003)
+  - [x] 인스톨러 단계에서 자동 등록(WiX/dmg/AppImage) (0004 + 0005 + 0006). dmg는 Info.plist 변경만으로 LaunchServices 자동 인덱싱, AppImage는 첫 실행 후 `xdg-mime default ...` 수동 단계 안내(`BUILD.md`).
+- 산출물: Moonlight 포크 패치 브랜치 `smartclassroom/t13-url-handler` (커밋 `ba30e49e` CLI 파서, `4e350df8` URL handler+single instance, `46fe3fc4` ComputerManager 진입점, `53d83db8` WiX URL Protocol, `61193bc4` macOS Info.plist, `064635c6` Linux .desktop) + `client-patches/moonlight-qt/`(패치 6건 + `README.md` + `BUILD.md`). 빌드 산출물(Win/macOS/Linux)은 사용자 환경.
 
 ### T14. 자동 인증서/PIN 주입 (사용자 입력 0개)
 - 카테고리: 기타 (Client)

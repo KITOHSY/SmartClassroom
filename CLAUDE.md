@@ -231,9 +231,20 @@ T05 `starts_at >= now` 정책 때문에 **NOW를 덮는 활성 예약은 service
 - T10이 첫 시리즈(`sunshine.conf`의 `broker_api_token` 키 + `confighttp` Bearer 인증 경로). 패치 0003/0004는 빌드 보정 — autogenerate 같은 자동화가 없으므로 멤버 추가 시 aggregate initializer 동기화 등은 수동으로 챙긴다. Windows 빌드·검증 절차와 환경 전제(MSYS2 UCRT64, Boost 1.87 강제, 설치본 `SunshineService` 포트 충돌, Bearer 검증 전 관리자 자격증명 1회 설정 필요)는 `host-patches/sunshine/BUILD.md`, 패치 목록은 같은 폴더 `README.md`.
 - T08 자동 페어링이 connect 토큰 동적 검증(`/tokens/verify` 콜백, §11 A6)을 **같은 시리즈에 후속 패치**로 추가할 예정 — 새 패치도 같은 번호 규칙. `client-patches/` (T13/T14 Moonlight fork)도 동일 패턴으로 합류한다.
 
+### Moonlight 클라이언트 포크는 `client-patches/`의 패치 시리즈로 관리 (T13)
+
+학생 PC의 Moonlight 클라이언트도 업스트림이 아니라 SmartClassroom 포크를 쓴다. Sunshine과 같은 모델 — 포크 소스는 이 레포에 두지 않고, **업스트림 고정 태그 위에 순서대로 적용하는 번호 붙은 `.patch` 시리즈**(`client-patches/moonlight-qt/`)로 관리한다:
+
+- 포크 체크아웃: `D:/Hongsun/moonlight-qt`, origin `KITOHSY/moonlight-qt`, upstream `moonlight-stream/moonlight-qt`, 패치 브랜치 `smartclassroom/t13-url-handler`, 고정 업스트림 태그 `v6.1.0`.
+- 적용: 클린 클론에 `git am client-patches/moonlight-qt/*.patch`. 재생성: `git format-patch <태그>..HEAD -o client-patches/moonlight-qt -- app/ wix/` — `-- app/ wix/` 경로 한정이 CI 워크플로 커밋·submodule 잡음을 시리즈에서 제외한다 (Sunshine의 `-- src/`와 같은 원칙).
+- T13이 첫 시리즈(6개 패치): ① `connect` 서브커맨드 CLI 파서, ② `moonlight://` URL 핸들러 + URL→CLI 확장 + `QLocalServer/QLocalSocket` 단일 인스턴스 forward, ③ `ComputerManager::requestConnect` + `NvComputer::pendingConnectToken`·`pendingHostId` 비-영속 멤버, ④ Windows WiX `HKCR\moonlight` URL Protocol 등록, ⑤ macOS `Info.plist` `CFBundleURLTypes`, ⑥ Linux `.desktop` `MimeType=x-scheme-handler/moonlight;`. 빌드 toolchain은 **MSVC 2022 + Qt 6.5+** (업스트림 CI 답습 — Sunshine의 MSYS2 UCRT64와는 다르다). 검증 절차·환경 전제·OS별 hazard는 `client-patches/moonlight-qt/BUILD.md`.
+- **선계약 (변경 시 양쪽 같이)**: URL 스키마 `moonlight://connect?token=&host-id=&host=&port=`는 `frontend/src/lib/moonlight.ts::buildMoonlightUrl`가 조립 — 키 이름을 바꾸면 T13 fork와 프런트를 함께 고쳐야 한다.
+- **T13 v1 폴백**: T13만 머지된 상태에서는 token이 `pendingConnectToken`에 보관만 되고 NvHTTP 헤더에 안 실린다 — 페어링된 호스트는 통상 stream, 미페어링 호스트는 표준 PIN 입력 화면으로 fall-through. KPI("입력 0개")는 미충족이지만 회귀 없음. **T14가 NvHTTP Bearer 헤더 주입 + 자동 PIN/인증서 주입을 같은 패치 시리즈에 추가**해 KPI 달성.
+
 ## 헷갈릴 때 참조
 
 - `PRD.md` — 제품이 무엇이고 무엇이 아닌지.
 - `EXP.md` — 어떤 작업이 어떤 순서·의존성으로 계획되어 있는지. 크리티컬 패스는 `§0`. 태스크를 마칠 때 여기에 상태를 갱신한다.
 - `README.md` — Quickstart, 관측성 카탈로그 (메트릭 이름, 헤더, 환경 변수).
 - `host-patches/sunshine/README.md` · `BUILD.md` — Sunshine 호스트 포크 패치 목록과 Windows 빌드·검증 절차.
+- `client-patches/moonlight-qt/README.md` · `BUILD.md` — Moonlight 클라이언트 포크 패치 목록과 Windows 빌드·검증 절차.

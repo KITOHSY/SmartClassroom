@@ -1,7 +1,7 @@
 From 4e350df87f7ad9e19393ba111c130f191bcf6639 Mon Sep 17 00:00:00 2001
 From: KITOHSY <hongsun900912@gmail.com>
 Date: Wed, 20 May 2026 10:00:14 +0900
-Subject: [PATCH 2/7] T13: add moonlight:// URL handler and single-instance
+Subject: [PATCH 2/8] T13: add moonlight:// URL handler and single-instance
  forwarding
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

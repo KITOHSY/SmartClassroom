@@ -1,0 +1,43 @@
+From e4ce4b5ea8e9c1e12d6ddc4cc59bfcb38be6be08 Mon Sep 17 00:00:00 2001
+From: KITOHSY <hongsun900912@gmail.com>
+Date: Thu, 21 May 2026 10:03:50 +0900
+Subject: [PATCH 8/8] T13: forward-declare scT13DispatchMoonlightUrl for
+ receiver lambda
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Build fix on top of 0007. After 0007 re-pointed the single-instance
+receiver from QDesktopServices::openUrl to scT13DispatchMoonlightUrl,
+the receiver lambda inside scT13StartSingleInstanceServer (defined
+~40 lines before scT13DispatchMoonlightUrl) called a name the compiler
+hadn't seen yet:
+
+  main.cpp(414): error C3861: 'scT13DispatchMoonlightUrl':
+                              식별자를 찾을 수 없습니다.
+
+Adding a forward declaration just above scT13StartSingleInstanceServer
+is a one-line fix that avoids reflowing two ~50-line static helpers.
+---
+ app/main.cpp | 5 +++++
+ 1 file changed, 5 insertions(+)
+
+diff --git a/app/main.cpp b/app/main.cpp
+index 1274e78d..d93244af 100644
+--- a/app/main.cpp
++++ b/app/main.cpp
+@@ -383,6 +383,11 @@ static bool scT13TryForwardToRunningInstance(const QStringList& args)
+ // invocations) are not dispatched in T13 v1 — the second instance returns 0
+ // and the user gets a no-op; the KPI path is the URL form, and CLI re-entry
+ // forwarding is a v1.1 follow-up.
++//
++// Forward declaration so the receiver lambda below can call into
++// scT13DispatchMoonlightUrl, which is defined further down.
++static void scT13DispatchMoonlightUrl(const QUrl& url);
++
+ static QLocalServer* scT13StartSingleInstanceServer(QObject* parent)
+ {
+     // Drop any stale socket from a previous unclean shutdown.
+-- 
+2.54.0.windows.1
+

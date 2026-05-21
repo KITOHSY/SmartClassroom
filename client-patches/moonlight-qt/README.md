@@ -24,8 +24,9 @@ SmartClassroom 포크가 [moonlight-qt](https://github.com/moonlight-stream/moon
 | 0005 | `0005-T13-register-moonlight-URL-scheme-in-macOS-Info.plis.patch` | macOS `Info.plist`에 `CFBundleURLTypes` (스킴 `moonlight`) 추가 | `app/Info.plist` |
 | 0006 | `0006-T13-register-moonlight-URL-scheme-in-Linux-.desktop-.patch` | Linux `.desktop` 에 `MimeType=x-scheme-handler/moonlight;` + `Exec=moonlight %u` | `app/deploy/linux/com.moonlight_stream.Moonlight.desktop` |
 | 0007 | `0007-T13-drop-setUrlHandler-call-Qt-6-signature-mismatch-.patch` | **빌드 보정** — 0002의 `QDesktopServices::setUrlHandler` lambda 호출이 Qt 6 시그니처(QObject\*+slot)와 불일치해 MSVC 빌드 실패(C2660). setUrlHandler 호출과 `<QDesktopServices>` include 제거 + single-instance receiver를 `scT13DispatchMoonlightUrl`로 직접 dispatch. macOS `QFileOpenEvent` 채널은 **v1.1 후속** (Q_OBJECT receiver 클래스 필요) | `app/main.cpp` |
+| 0008 | `0008-T13-forward-declare-scT13DispatchMoonlightUrl-for-re.patch` | **빌드 보정** — 0007이 옮긴 호출이 함수 정의보다 앞에 있어 MSVC C3861. `scT13StartSingleInstanceServer` 정의 위에 `scT13DispatchMoonlightUrl` forward declaration 한 줄 추가 | `app/main.cpp` |
 
-합계 `app/` + `wix/` 9파일 / 약 +510줄, −32줄. 0007은 T10 0003/0004와 같은 부류의 빌드 보정 패치(코드 결함 fix) — 본래 0002와 한 커밋이어야 했으나 이미 export된 시리즈를 보존하기 위해 별도 패치로 분리.
+합계 `app/` + `wix/` 9파일 / 약 +515줄, −32줄. 0007/0008은 T10 0003/0004와 같은 부류의 빌드 보정 패치 누적 — 본래 0002와 한 커밋이어야 했으나 이미 export된 시리즈를 보존하기 위해 별도 패치로 분리.
 
 ## 무엇을 / 왜 (T13)
 

@@ -1,7 +1,7 @@
 From 064635c67f11c2657a8f3f33761b303c6abe4839 Mon Sep 17 00:00:00 2001
 From: KITOHSY <hongsun900912@gmail.com>
 Date: Wed, 20 May 2026 10:06:55 +0900
-Subject: [PATCH 6/7] T13: register moonlight:// URL scheme in Linux .desktop
+Subject: [PATCH 6/8] T13: register moonlight:// URL scheme in Linux .desktop
  file
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

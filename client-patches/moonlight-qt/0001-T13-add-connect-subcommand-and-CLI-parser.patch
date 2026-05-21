@@ -1,7 +1,7 @@
 From ba30e49ec6dd2bd6cd695c083f4bf0e0da207657 Mon Sep 17 00:00:00 2001
 From: KITOHSY <hongsun900912@gmail.com>
 Date: Wed, 20 May 2026 09:54:02 +0900
-Subject: [PATCH 1/6] T13: add `connect` subcommand and CLI parser
+Subject: [PATCH 1/7] T13: add `connect` subcommand and CLI parser
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit

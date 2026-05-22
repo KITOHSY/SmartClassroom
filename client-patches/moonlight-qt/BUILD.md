@@ -1,6 +1,6 @@
-# SmartClassroom — Moonlight Qt 패치 빌드 & 검증 (T13)
+# SmartClassroom — Moonlight Qt 패치 빌드 & 검증 (T13/T14)
 
-이 문서는 T13 패치 시리즈가 적용된 moonlight-qt fork(`smartclassroom/t13-url-handler` 브랜치, 업스트림 태그 `v6.1.0` 기준)를 **Windows에서 MSVC 2022 + Qt online installer**로 빌드해 `moonlight://connect?...` URL 핸들러를 끝까지 검증하는 절차다.
+이 문서는 T13+T14 패치 시리즈가 적용된 moonlight-qt fork(`smartclassroom/t13-url-handler` 브랜치, 업스트림 태그 `v6.1.0` 기준)를 **Windows에서 MSVC + Qt online installer**로 빌드해 `moonlight://connect?...` URL 핸들러와 T14 자동 연결(자동 페어링 + 자동 스트림)을 끝까지 검증하는 절차다.
 
 macOS·Linux 빌드는 v1.1 후속 — T13 v1 시점에는 **세 OS 모두에 대한 패치는 머지하되 검증은 Windows만** 한다 (KPI 측정 환경이 Windows).
 
@@ -28,7 +28,8 @@ git am D:\Hongsun\SmartClassroom\client-patches\moonlight-qt\*.patch
 ```
 
 `git am`이 실패하면 업스트림 태그가 v6.1.0이 맞는지 / submodule이 모두 init 되어
-있는지 / 패치 파일들이 0001~0008 순서대로 적용되는지 확인 (0007/0008은 빌드 보정 패치).
+있는지 / 패치 파일들이 0001~0010 순서대로 적용되는지 확인. 0001~0008 = T13(0007/0008은
+빌드 보정), 0009/0010 = T14(자동 연결 — 빌드 보정 없이 첫 빌드 통과).
 
 ## 3. 빌드 (Qt 6.7 + MSVC v143/v144)
 
@@ -150,35 +151,94 @@ Moonlight가 실행 중인 상태에서 위 5.3 명령을 다시 호출:
   - `T13: dispatching moonlight://connect host= ...`
   - (host가 이미 m_KnownHosts에 있으면) `T13: stamped pending connect on known host <name>`
 
-### 5.5 URL 시나리오 ③ — 기존 페어링된 호스트
+### T14 자동 연결 시나리오 (5.5 ~ 5.8)
 
-이미 페어링된 호스트의 IP로 URL을 호출:
+5.5~5.8은 T14 자동 페어링·자동 스트림을 검증한다. **실호스트 풀체인 전제**:
+T10 패치본 Sunshine 호스트(`sunshine.conf`에 `broker_api_token` 설정) + Broker
+(admin이 해당 호스트에 `sunshine_broker_token` 등록) + 프런트가 `broker` 파라미터를
+포함한 URL을 생성. T14 URL은 `moonlight://connect?token=&host-id=&host=&port=&broker=`
+형태 — `broker`는 Broker base URL(예: `http://192.168.1.50:8000`).
+
+로그는 `%LOCALAPPDATA%\Moonlight Game Streaming Project\Moonlight.log` 의 `T14:`
+라인으로 추적 (`T14: auto-connect started` / `headless pairing` / `Broker relayed
+PIN` / `auto-connect streaming` / `auto-connect failed`).
+
+**같은 PC loopback hazard**: Sunshine 호스트와 Moonlight를 같은 데스크톱에서 띄우면
+스트림 화면이 검다(§7). URL 핸들러·자동 흐름 검증엔 무방하나 스트림 화질까지 보려면
+강의실 PC ↔ 학생 PC = 별도 기기 2대 필요. **방화벽 hazard**(§7): MSI 없이 exe 직접
+실행 시 첫 실행에서 Moonlight·Sunshine 방화벽 경고를 미리 "허용"해 둘 것.
+
+### 5.5 시나리오 ① — 이미 페어링된 호스트 → 자동 스트림
+
+이미 페어링된 호스트로 T14 URL 호출 (포털 `[접속]` 또는 cmd `start "" "moonlight://..."`).
 
 기대 동작:
 
-- PcView가 그 호스트를 "Paired"로 표시.
-- 사용자가 그 호스트를 클릭 → 통상 stream segue로 진입.
-- 토큰은 `NvComputer::pendingConnectToken`에 보관됨 — 실제 NvHTTP Bearer 헤더
-  주입은 **T14 후속**. T13 v1에서는 보관만.
+- 모달 "Connecting to <host>..." 진행 팝업이 잠깐 뜬다.
+- 다이얼로그·클릭 0회 — 페어링을 건너뛰고 바로 `StreamSegue`로 진입해 "Desktop"
+  스트리밍 시작.
+- 로그: `T14: auto-connect started for <host> (already paired)` →
+  `T14: auto-connect streaming Desktop from <host>`.
 
-### 5.6 URL 시나리오 ④ — 미페어링 호스트 (T13 폴백 동작)
+### 5.6 시나리오 ② — 미페어링 호스트 원클릭 (입력 0개 KPI)
 
-페어링되지 않은 호스트 IP로 URL을 호출:
+페어링되지 않은 호스트로 T14 URL 호출.
+
+기대 동작 — **이것이 "사용자 입력 0개" KPI 검증**:
+
+- 진행 팝업 "Pairing with <host>..." 표시.
+- **사용자가 PIN을 입력하지 않는다.** Moonlight가 PIN을 생성 → 로컬 페어링 핸드셰이크
+  시작 + `ScBrokerClient`가 Broker `POST /api/v1/pairing`로 PIN 전달 → Broker가
+  Sunshine `/api/pin`에 relay → 페어링 자동 완료.
+- 페어링 후 "Loading app list..." → "Desktop" 앱 잡히면 자동으로 `StreamSegue` 진입.
+- 다이얼로그·클릭·키 입력 **0회**.
+- 로그: `T14: auto-connect started ... (needs pairing)` → `starting headless pairing`
+  → `Broker relayed PIN` → `headless pairing succeeded` → `auto-connect paired ...
+  waiting for app list` → `auto-connect streaming Desktop`.
+
+### 5.7 시나리오 ③ — Broker 다운 (폴백, hang 없음)
+
+Broker를 내린 상태(또는 URL의 `broker`를 도달 불가 주소로)에서 미페어링 호스트
+URL 호출.
 
 기대 동작:
 
-- PcView가 해당 호스트를 "Not paired"로 표시.
-- 사용자 클릭 → **표준 PIN 입력 화면**으로 진입 (T13 v1 폴백 — T14 머지 전).
-- 사용자가 PIN을 직접 입력하면 통상 페어링.
-- KPI("입력 0개")는 미충족이지만 회귀 없음.
+- 진행 팝업 표시 후, `ScBrokerClient` 전송 타임아웃(15s) 또는 연결 실패 →
+  자동 흐름 종료.
+- 팝업이 닫히고 에러 다이얼로그 표시 → 사용자는 표준 PcView 화면에 남아 수동
+  페어링 가능. **Moonlight가 멈추지(hang) 않는다.**
+- 로그: `T14: Broker pairing relay failed ... broker_unreachable` →
+  `T14: auto-connect failed`.
 
-### 5.7 End-to-end (SmartClassroom 연동)
+### 5.8 시나리오 ④ — 페어링 실패 (폴백, hang 없음)
+
+페어링이 실패하도록 유도(예: Broker에 등록된 `sunshine_broker_token`을 호스트
+실제 값과 불일치하게) 후 미페어링 호스트 URL 호출.
+
+기대 동작:
+
+- 진행 팝업 → 페어링 실패 감지 → 폴백(에러 다이얼로그) → PcView 수동, hang 없음.
+- phase-1(`getservercert`) bounded timeout(30s)이 PIN 미도달 시 무한 대기를 막는다.
+- 로그: `T14: headless pairing failed` 또는 `Broker pairing relay failed` →
+  `auto-connect failed`.
+
+### 5.9 사용자 입력 0회 회귀 체크리스트
+
+moonlight-qt는 연결 흐름 자동 테스트 하네스가 없다(T10 Sunshine 패치와 동일 정책).
+"사용자 입력 0회" KPI 회귀는 **시나리오 5.6의 스크립트화된 수동 체크리스트**로 갈음:
+
+1. 미페어링 호스트 준비 (필요 시 Sunshine 신뢰 저장소에서 클라이언트 인증서 제거).
+2. 포털 로그인 → 예약 → `[접속]` 클릭. **이 클릭 이후 키보드·마우스 입력 금지.**
+3. 통과 기준: Moonlight 기동 → 자동 페어링 → "Desktop" 스트림 도달까지 **추가 입력 0회**.
+4. 실패 시 로그의 `T14:` 라인으로 어느 단계에서 멈췄는지 진단.
+
+### 5.10 End-to-end (SmartClassroom 연동)
 
 1. SmartClassroom broker + frontend 가동 (`docker compose up --build` + `pnpm dev`).
 2. 브라우저에서 로그인 → 캘린더에서 예약 → `[접속]` 클릭.
-3. 브라우저가 `moonlight://connect?...` URL 호출 → Windows가 등록된 핸들러로
-   Moonlight.exe 기동 → 시나리오 5.5 (페어링됨) 또는 5.6 (미페어링) 중 하나로
-   진입.
+3. 브라우저가 `moonlight://connect?...&broker=...` URL 호출 → Windows가 등록된
+   핸들러로 Moonlight.exe 기동 → 시나리오 5.5(페어링됨) 또는 5.6(미페어링)으로
+   자동 진입.
 
 ## 6. macOS · Linux 빌드 (v1.1 후속)
 
@@ -211,9 +271,17 @@ Moonlight가 실행 중인 상태에서 위 5.3 명령을 다시 호출:
   로 정리한다 — 첫 인스턴스 시작 시 자동.
 - **Qt 5 vs 6 호환**: 업스트림 `app.pro`가 `lessThan(QT_MAJOR_VERSION, 6)`
   분기를 두는지 확인. v6.1.0 핀이라면 같은 시점 업스트림 CI를 따른다.
-- **NvHTTP Bearer 미주입 (스코프 안)**: T13만 머지된 상태에서 token은
-  `pendingConnectToken`에만 보관되고 NvHTTP 헤더에 안 실린다. 사용자는 통상
-  PIN 화면을 본다 — 회귀가 아니라 v1 의도된 폴백. T14가 본격 KPI 달성.
+- **T14 자동 연결은 호스트 online을 기다린다**: T14 자동 흐름은 대상 호스트가
+  polling으로 resolve돼 `CS_ONLINE`이 된 뒤에만 트리거된다. 호스트가 꺼져 있거나
+  도달 불가면 진행 팝업이 아예 안 뜬다 — hang이 아니라 의도된 동작(폴링이 호스트를
+  못 찾을 뿐). URL의 `host`/`port`가 실제 Sunshine 스트리밍 포트와 맞는지 확인.
+- **T14 `broker` 파라미터 도달성**: `moonlight://` URL의 `broker`는 학생 PC에서
+  도달 가능한 Broker base URL이어야 한다. 프런트는 `window.location.origin`을 넣으므로
+  (학생 브라우저·Moonlight가 같은 PC) 통상 자동 충족. Broker 미도달 시 시나리오 5.7
+  폴백.
+- **"Desktop" 앱 전제**: T14 자동 스트림은 호스트 앱 목록에서 "Desktop"(대소문자
+  무시)을 고른다. Sunshine 기본 설정이 이 앱을 노출하므로 정상 운영에선 항상 잡히나,
+  강의실 PC 배포 시 이 기본 앱 유지가 전제(T20). 못 찾으면 첫 앱으로 폴백.
 - **IPv6 host 인코딩**: 프런트 `buildMoonlightUrl`이 `URLSearchParams`에 IP를
   raw 통과. IPv6 `[fe80::1]` 형태가 URL에 들어갈 때 안전한지 확인 필요. v1
   강의실 PC는 IPv4 가정이라 비범위.

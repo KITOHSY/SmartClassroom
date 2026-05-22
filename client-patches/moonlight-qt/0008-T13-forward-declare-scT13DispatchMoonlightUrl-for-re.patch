@@ -1,7 +1,7 @@
 From e4ce4b5ea8e9c1e12d6ddc4cc59bfcb38be6be08 Mon Sep 17 00:00:00 2001
 From: KITOHSY <hongsun900912@gmail.com>
 Date: Thu, 21 May 2026 10:03:50 +0900
-Subject: [PATCH 8/8] T13: forward-declare scT13DispatchMoonlightUrl for
+Subject: [PATCH 08/10] T13: forward-declare scT13DispatchMoonlightUrl for
  receiver lambda
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

@@ -1,7 +1,8 @@
 From 53d83db834adc377c43f0cd16bac1007a89ed54a Mon Sep 17 00:00:00 2001
 From: KITOHSY <hongsun900912@gmail.com>
 Date: Wed, 20 May 2026 10:06:01 +0900
-Subject: [PATCH 4/8] T13: register moonlight:// URL protocol in WiX installer
+Subject: [PATCH 04/10] T13: register moonlight:// URL protocol in WiX
+ installer
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit

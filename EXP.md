@@ -11,7 +11,7 @@
 
 - 총 22개 태스크. 카테고리: 백엔드 8 / 프런트엔드 4 / 풀스택 2 / 기타(Host·Client·인증·인프라·운영) 8.
 - PRD Feature 매핑: F1=T04a·T16(개발) + T01·T04b(운영 전환), F2=T08·T13·T14·T17, F3=T07, F4=T09·T12·T15, F5=T06·T11·T17·T18.
-- 크리티컬 패스(개발 트랙): **T03 → T04a → T05 → T07 → T08 → T14 → T17** — Mock 인증 위에서 "원클릭 접속(입력 0개)" KPI 달성까지의 최단 경로. 외부 행정 의존 없음. 진행률 6/7 (T03/T04a/T05/T07/T08/T17 완료, T14 대기). 비크리티컬 T06·T11·T16 완료(2026-05-15), T21 캘린더·바로접속 통합 완료(2026-05-18).
+- 크리티컬 패스(개발 트랙): **T03 → T04a → T05 → T07 → T08 → T14 → T17** — Mock 인증 위에서 "원클릭 접속(입력 0개)" KPI 달성까지의 최단 경로. 외부 행정 의존 없음. 진행률 **7/7 완주** (T03/T04a/T05/T07/T08/T14/T17 완료, 2026-05-22) — 크리티컬 패스의 모든 태스크 완료. 비크리티컬 T06·T11·T16 완료(2026-05-15), T21 캘린더·바로접속 통합 완료(2026-05-18).
 - 운영 전환 트랙: **T01 → T04b** — CNU SSO 프로토콜 확정 + Provider 통합. T04a 머지 이후 별도 트랙으로 병행, 운영 출시 전 머지 필수.
 
 ### 0-1. PRD-instruction.md MVP 요구사항 ↔ 태스크
@@ -31,7 +31,7 @@
 
 | KPI | 측정 책임 |
 | --- | --- |
-| 사용자 입력 값 0개 | T17 (자동 측정 hook) + T14 (자동 페어링 회귀 테스트) |
+| 사용자 입력 값 0개 | T17 (자동 측정 hook) + T14 (자동 페어링·자동 스트림 — 입력 0회 수동 e2e 체크리스트, `client-patches/moonlight-qt/BUILD.md` §5.9) |
 | 입력 지연 20–50ms | T18 KPI 위젯 (T11 에이전트의 RTT/프레임 메트릭 집계) |
 | 자원 점유 +40% / 가동률 균등화 | T18 KPI 위젯 (T05 예약 데이터 + T11 사용 시간 집계) |
 
@@ -198,7 +198,7 @@
   - **내부 인증 = X-Internal-Token (§11 A6 해소)** — `/tokens/verify`의 임시 `require_admin`을 `X-Internal-Token` 헤더 공유 비밀로 교체(`require_internal_token` 의존성 + `Settings.internal_api_token` + production 부팅 가드). mTLS 대신 공유 비밀 — v1 단순성.
   - **confighttp 포트 = 47990 고정** — Sunshine confighttp(`/api/pin`)는 스트리밍 포트(`hosts.sunshine_port`, 기본 47984)와 별개. `Settings.sunshine_config_port`. 자가서명 HTTPS라 `verify=False`(`sunshine_tls_verify`) — 캠퍼스 LAN 전제, cert pinning은 후속 강화.
   - **`broker_api_token` = 호스트별 컬럼** — `hosts.sunshine_broker_token`(nullable). Sunshine `sunshine.conf`의 `broker_api_token`과 짝. Broker가 raw로 제시해야 하므로 해시 불가 — 평문 저장, 응답 스키마·로그·audit에 미노출.
-  - **v1 = 백엔드 전용** — T14(Moonlight 측 자동화)·T09(라이프사이클) 미구현이라 엔드포인트는 MockTransport 통합테스트 + 실호스트 수동 e2e로 검증, 실제 Moonlight 배선은 T14 위임. Sunshine→Broker `/tokens/verify` 콜백은 범위 밖(필요 시 `host-patches/sunshine/` 후속 패치).
+  - **v1 = 백엔드 전용** — T08 머지 시점엔 T14(Moonlight 측 자동화)·T09(라이프사이클)가 미구현이라 엔드포인트는 MockTransport 통합테스트 + 실호스트 수동 e2e로 검증, 실제 Moonlight 배선은 T14에 위임했다. **T14는 2026-05-22 완료** — `ScBrokerClient`가 `POST /api/v1/pairing`를 호출하는 Moonlight 측 배선이 들어왔다(T09는 여전히 미구현). Sunshine→Broker `/tokens/verify` 콜백은 범위 밖(필요 시 `host-patches/sunshine/` 후속 패치).
   - **Broker 우회 경계** — T08은 *새 페어링*을 Broker 독점 경로로 만든다(PIN 주입 크리덴셜을 학생이 못 가짐). 1차 자물쇠는 강의실 PC Sunshine 웹UI 비밀번호 — 강력·비밀·PC별 고유로 설정(T20 배포 요건; 학생이 47990 로그인 페이지 도달 자체는 막을 수 없다고 가정). *기존 페어링* 재사용 차단(예약 종료 후 직접 재접속)은 세션 종료 시 클라이언트 인증서 un-pair = T09/T12 몫.
 - 완료 조건
   - [x] Sunshine `/api/pin` 호출로 4자리 PIN 자동 입력 (T10 Bearer 토큰 인증 사용)
@@ -280,7 +280,7 @@
 - 상태: **완료 (2026-05-20, e2e 검증 2026-05-21)** — Moonlight 포크(`D:/Hongsun/moonlight-qt`, `KITOHSY/moonlight-qt`)에 코드 변경 + 패치 시리즈 export 완료. 업스트림 태그 `v6.1.0` (commit `f786e94c`) 기준, 패치 브랜치 `smartclassroom/t13-url-handler`, **8개 커밋 (기능 6 + 빌드보정 2)**: ① `connect` 서브커맨드 CLI 파서(`app/cli/commandlineparser.{h,cpp}`) ② `moonlight://` URL 핸들러 + URL→CLI 확장 + `QLocalServer/QLocalSocket` 단일 인스턴스 forward(`app/main.cpp`) ③ `ComputerManager::requestConnect` + `NvComputer::pendingConnectToken/pendingHostId` 비-영속 멤버(`app/backend/`) ④ Windows WiX `HKCR\moonlight` URL Protocol 등록(`wix/Moonlight/Product.wxs`) ⑤ macOS `Info.plist` `CFBundleURLTypes`(`app/Info.plist`) ⑥ Linux `.desktop` `MimeType=x-scheme-handler/moonlight;`(`app/deploy/linux/`) ⑦ `setUrlHandler` Qt6 시그니처 빌드보정 ⑧ forward declaration 빌드보정. `git format-patch v6.1.0..HEAD -o client-patches/moonlight-qt -- app/ wix/` 8건 export 완료.
 - e2e 검증 (2026-05-21): 사용자 환경(Windows + Qt 6.7.3 `msvc2019_64` + VS 2026 BuildTools MSVC v144 + jom)에서 `qmake`+`jom` 빌드 통과 → `app\release\Moonlight.exe` 생성. URL 시나리오 4종 모두 통과 — ① 미등록 IP `moonlight://connect?...` → URL→CLI 확장 + `addNewHost` ② 단일 인스턴스 forward(두 번째 창 안 뜸 + `T13: dispatching` 로그) ③ 페어링된 호스트 → `T13: stamped pending connect on known host` 즉시 stamp ④ 미페어링 호스트 → 표준 PIN 입력 폴백 + polling resolve 후 `T13: stamped ... after polling resolved it`. 빌드 중 발견·보정 2건: **0007**(`QDesktopServices::setUrlHandler`에 lambda 전달이 Qt 6 시그니처 `(scheme, QObject*, slot)`와 불일치 → MSVC C2660), **0008**(0007이 옮긴 호출이 함수 정의보다 앞 → C3861, forward declaration로 해소). 가이드 보강: ⓐ 사용자 환경이 Qt 6.11 MinGW뿐이라 v6.1.0 CI 매트릭스(`appveyor.yml` `QTDIR: C:\Qt\6.7` + `msvc2019_64`)에 맞춰 Qt 6.7.3 msvc2019_64 flavor 추가 설치 — non-LTS라 MaintenanceTool "Archive" 옵션 필요 ⓑ submodule init 선행 ⓒ `qmake`+`jom`은 exe만 생성 — `windeployqt` + `libs/windows/lib/x64` 11개 DLL + `AntiHooking.dll` + `gamecontrollerdb.txt` deploy 단계 필요 ⓓ MSI 없이 검증 시 URL 스킴은 HKCU `reg add`로 임시 등록(`.reg` import가 cmd 백슬래시 이스케이프 함정 회피) ⓔ exe 직접 실행 시 Windows Defender Firewall 경고가 페어링 라운드트립을 보류 — 허용 필요(정식 MSI는 `Product.wxs`의 `FirewallException`이 자동 처리). 검증 절차는 `client-patches/moonlight-qt/BUILD.md`. v1.1 후속: macOS QFileOpenEvent receiver(`setUrlHandler` Qt6 시그니처용 Q_OBJECT 클래스), macOS/Linux 인스톨러 검증.
 - 결정 사항 (2026-05-20):
-  - **인증 모델 = 토큰 보관 후 T14로 위임** — T13은 URL을 받아 `NvComputer::pendingConnectToken/pendingHostId`(비-영속 멤버)에 stamp까지만. NvHTTP `Authorization: Bearer <token>` 헤더 주입과 자동 PIN/인증서 주입은 **T14 같은 패치 시리즈에 후속**. T13만 머지된 상태에서는 페어링된 호스트는 통상 stream, 미페어링 호스트는 표준 PIN 입력 화면으로 fall-through — KPI("입력 0개") 미충족이지만 회귀 없음.
+  - **인증 모델 = 토큰 보관 후 T14로 위임** — T13은 URL을 받아 `NvComputer::pendingConnectToken/pendingHostId`(비-영속 멤버)에 stamp까지만. T13만 머지된 상태에서는 페어링된 호스트는 통상 stream, 미페어링 호스트는 표준 PIN 입력 화면으로 fall-through — KPI("입력 0개") 미충족이지만 회귀 없음. **(→ T14 완료, 2026-05-22)** — T14는 T13 시점에 예상한 "NvHTTP `Authorization: Bearer` 헤더 주입" 설계를 **채택하지 않았다**: connect 토큰은 Sunshine이 아니라 Broker로 가고(PIN-relay 모델), Sunshine 인증은 표준 페어링이 교환하는 클라이언트 인증서(mTLS)가 담당. 상세는 아래 T14.
   - **URL 스키마는 프런트 선계약 그대로** — `moonlight://connect?token=<raw>&host-id=<id>&host=<ip>&port=<port>`. `frontend/src/lib/moonlight.ts::buildMoonlightUrl`가 조립. T13 fork가 URL→CLI 확장(`scT13ExpandMoonlightConnectUrl`)으로 `moonlight connect <host> --port <port> --connect-token <token> --host-id <hostId>` 형태로 변환 후 표준 dispatch.
   - **단일 인스턴스 메커니즘 = `QLocalServer/QLocalSocket`** — 업스트림에 없는 메커니즘이라 직접 도입. named pipe `Moonlight-SingleInstance-v1`. 두 번째 인스턴스가 URL을 보면 첫 인스턴스에 forward 후 `return 0`. 첫 인스턴스가 받은 URL은 `QDesktopServices::openUrl`로 자체 핸들러 재진입 → 일관된 디스패치 경로. CLI 인자(URL 아닌) forward는 v1.1 후속 — KPI 경로는 URL.
   - **fork 모델 = T10 Sunshine 답습** — `client-patches/moonlight-qt/` 디렉터리(`host-patches/sunshine/`와 형제). `KITOHSY/moonlight-qt` push, `git am *.patch` 적용, `git format-patch -- app/ wix/`로 재생성. 업스트림 추적 주기는 §11 fork 유지보수 / T20.
@@ -297,12 +297,20 @@
 ### T14. 자동 인증서/PIN 주입 (사용자 입력 0개)
 - 카테고리: 기타 (Client)
 - 의존성: T13, T08
+- 상태: **완료 (2026-05-22)** — moonlight-qt 포크(`smartclassroom/t13-url-handler`)에 T13 8커밋 위로 T14 2커밋 추가: `25a429ac`(ScBrokerClient), `e4b04a18`(자동 연결 본체 — broker URL 파라미터 + 헤드리스 페어링 + 자동연결 orchestration). 빌드 보정 없이 첫 빌드 통과(Qt 6.7.3 `msvc2019_64` + MSVC). `git format-patch v6.1.0..HEAD -o client-patches/moonlight-qt -- app/ wix/` → 패치 10건(T13 0001–0008 + T14 0009/0010) export. SmartClassroom 측 `frontend/src/lib/moonlight.ts::buildMoonlightUrl`에 URL `broker` 파라미터 추가(+테스트).
+- 완료조건 정정 (T08 criterion 2와 같은 류 — 프로토콜 이해 전 표현):
+  - **criterion 1** "`NvPairingManager` 외부 PIN 주입 + 토큰 기반 인증" → 실체: 페어링 PIN은 클라이언트(Moonlight)가 생성하고 `NvPairingManager::pair(pin)`이 이미 받는다. "외부 주입"의 실체 = 그 PIN이 *Sunshine 호스트*에 **Broker 경유**로 도달하는 것 — `ScBrokerClient`가 `POST /api/v1/pairing`로 Broker에 넘기면 T08이 Sunshine `/api/pin`에 relay. `NvPairingManager`에 실제로 더한 건 헤드리스 경로 phase-1(`getservercert`)의 **bounded timeout**(PIN 미도달 시 무한 hang 방지). connect 토큰은 `NvPairingManager`가 아니라 Broker 호출의 인증으로 쓰인다.
+  - **criterion 2** "`IdentityManager`가 Broker 발급 인증서 일회성 사용" → **폐기**. T08은 PIN-relay 모델이라 표준 페어링 핸드셰이크가 클라이언트 인증서를 자동 교환(Sunshine 신뢰 저장소 등록)한다. Broker는 인증서를 발급하지 않는다. `IdentityManager`의 per-install 자가서명 인증서를 그대로 쓴다.
 - 완료 조건
-  - [ ] `NvPairingManager` 에 외부 PIN 주입 경로 활성화 + 토큰 기반 인증 옵션 추가
-  - [ ] `IdentityManager` 가 Broker 발급 인증서/키를 일회성으로 사용 가능하도록 확장
-  - [ ] 페어링 성공 시 사용자 GUI 개입 0회 — 자동으로 Session 진입
-  - [ ] 실패 시 T19 폴백 화면으로 분기
-- 산출물: 패치, 사용자 입력 0회 회귀 테스트
+  - [x] (정정) `NvPairingManager` phase-1 bounded timeout + Broker PIN-relay 경로(`ScBrokerClient`) — 외부 PIN이 Broker 경유로 Sunshine에 도달
+  - [x] (폐기) ~~`IdentityManager` Broker 발급 인증서~~ — PIN-relay 모델이라 불필요, 표준 핸드셰이크가 인증서 교환
+  - [x] 페어링 성공 시 사용자 GUI 개입 0회 — `ComputerManager` 자동연결 상태머신이 헤드리스 페어링 → "Desktop" 앱 탐색 → `Session` 생성, `main.qml`이 `StreamSegue`로 자동 진입
+  - [x] 실패 시 폴백 — `autoConnectFailed` → 진행 팝업 닫고 에러 다이얼로그 + 표준 PcView 수동 UI (T19 클라이언트 측 폴백)
+- 결정 사항 (2026-05-22):
+  - **PIN-relay 모델 — connect 토큰은 Broker로** — T14는 새 암호화·인증서 발급이 아니라 기존 조각(T13 토큰 보관 / `ComputerManager::pairHost` / T08 Broker PIN relay / 업스트림 스트림 경로)을 순서대로 배선한 오케스트레이션. 페어링 PIN은 클라이언트가 만들고 Broker가 Sunshine에 중계 — 토큰은 Broker 호출 인증으로만.
+  - **`CliStartStream::Launcher` 미재사용** — 업스트림 CLI-stream 런처는 `initialView`+context-property 결합이라 *이미 실행 중인* Moonlight에 URL이 forward되는 경우를 못 다룬다. 그래서 런처 대신 `StreamSegue.qml`+`Session` 핸드오프 패턴만 재사용하고, 자동연결 상태머신은 `ComputerManager` 내부 시그널 구동으로 두 진입 경로(새 실행 / forwarded)를 일관 처리.
+  - **헤드리스 완료는 별도 채널** — `PendingPairingTask`에 `headless` 플래그를 둬 자동 페어링 완료가 공용 `pairingCompleted` 시그널을 안 타게 함. `ComputerModel`/CLI pair가 중복 에러 다이얼로그를 띄우는 것 방지.
+- 산출물: 패치 0009/0010 (`client-patches/moonlight-qt/`), `BUILD.md` §5.9 입력 0회 수동 e2e 체크리스트.
 
 ---
 

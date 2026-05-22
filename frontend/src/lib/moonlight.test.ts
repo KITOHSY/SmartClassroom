@@ -30,6 +30,17 @@ describe('buildMoonlightUrl', () => {
     const params = new URLSearchParams(buildMoonlightUrl('t', host).split('?')[1]);
     expect(params.get('host')).toBe('');
   });
+
+  it('broker 파라미터에 현재 페이지 origin을 담는다 (T14)', () => {
+    const host: HostConnectionInfo = {
+      id: 7,
+      hostname: 'pc-7',
+      ip_address: '10.0.0.7',
+      sunshine_port: 47989,
+    };
+    const params = new URLSearchParams(buildMoonlightUrl('t', host).split('?')[1]);
+    expect(params.get('broker')).toBe(window.location.origin);
+  });
 });
 
 describe('detectOS', () => {

@@ -5,15 +5,22 @@ export type DetectedOS = 'windows' | 'macos' | 'linux' | 'unknown';
 /**
  * moonlight:// 커스텀 URL 조립.
  *
- * T13(moonlight-qt fork)의 커스텀 URL 핸들러 계약 — T13 EXP의 `--connect-token` /
- * `--host-id` 인자에 대응한다. T13 머지 전까지는 이 스키마가 프런트↔클라이언트 계약이다.
+ * T13/T14(moonlight-qt fork)의 커스텀 URL 핸들러와의 선계약 — 파라미터 키를 바꾸면
+ * moonlight-qt 파서(`commandlineparser` / `main.cpp` scT13)도 함께 고쳐야 한다.
+ *
+ * `broker` (T14): Moonlight가 자동 페어링 시 `{broker}/api/v1/pairing`을 호출하기 위한
+ * Broker base URL. 프런트는 상대주소(`api/client.ts` `baseURL: '/api/v1'`)로 same-origin
+ * Broker를 쓰므로 페이지 origin이 곧 Broker base — `window.location.origin`을 싣는다.
  */
 export function buildMoonlightUrl(token: string, host: HostConnectionInfo): string {
+  const broker =
+    typeof window !== 'undefined' && window.location ? window.location.origin : '';
   const params = new URLSearchParams({
     token,
     'host-id': String(host.id),
     host: host.ip_address ?? '',
     port: String(host.sunshine_port),
+    broker,
   });
   return `moonlight://connect?${params.toString()}`;
 }

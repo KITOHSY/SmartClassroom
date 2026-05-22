@@ -1,8 +1,8 @@
 From 46fe3fc4893720a21a896af9fc483d90b162ff1f Mon Sep 17 00:00:00 2001
 From: KITOHSY <hongsun900912@gmail.com>
 Date: Wed, 20 May 2026 10:05:03 +0900
-Subject: [PATCH 3/8] T13: ComputerManager connect entry point + pending token
- bookkeeping
+Subject: [PATCH 03/10] T13: ComputerManager connect entry point + pending
+ token bookkeeping
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit

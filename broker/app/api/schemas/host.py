@@ -46,6 +46,16 @@ class HostCreate(BaseModel):
     ip_address: str | None = None
     sunshine_port: int = Field(default=47984, ge=1, le=65535)
     gpu_model: str | None = Field(default=None, max_length=128)
+    # T08 — Sunshine confighttp Bearer 토큰. 미지정 시 페어링 불가(나중에 setter로 등록 가능).
+    sunshine_broker_token: str | None = Field(default=None, max_length=128)
+
+
+class HostSunshineTokenUpdate(BaseModel):
+    """PUT /api/v1/hosts/{id}/sunshine-token(admin) — 기존 호스트에 페어링 토큰 등록/회전."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    sunshine_broker_token: str = Field(min_length=1, max_length=128)
 
 
 class HostWithAgentToken(HostRead):

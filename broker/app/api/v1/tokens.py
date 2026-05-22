@@ -2,19 +2,19 @@
 
 POST /tokens/verify — Broker 내부 호출용. T08 자동 페어링 + T10 Sunshine fork가 호출자.
 
-T07 시점 보호: `Depends(require_admin)` (임시).
-TODO(T08): X-Internal-Token 헤더 또는 mTLS 기반 internal auth로 교체 — §11 A6.
+보호: `Depends(require_internal_token)` — X-Internal-Token 헤더 공유 비밀 (§11 A6).
+T08에서 T07 시점의 임시 가드 `require_admin`을 대체. 내부 컴포넌트는 사용자/admin
+세션이 없는 머신이므로 별도 인증 채널을 쓴다.
 
-응답 정책: 200 OK + `valid: bool` 모델 — HTTPException 안 씀.
-호출자가 valid 플래그로 분기하기 쉽게 (T10 Sunshine fork가 단순 JSON 파싱 가능).
+응답 정책: 200 OK + `valid: bool` 모델 — 검증 결과는 HTTPException으로 분기 안 함
+(인증 실패만 401). 호출자가 valid 플래그로 단순 분기 (T10 Sunshine fork가 JSON 파싱).
 """
 
 from __future__ import annotations
 
-from broker.app.api.deps import get_db, require_admin
+from broker.app.api.deps import get_db, require_internal_token
 from broker.app.api.schemas.token import TokenVerifyRequest, TokenVerifyResponse
 from broker.app.domain.audit import write_audit
-from broker.app.domain.user import User
 from broker.app.services import token_service
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,7 +26,7 @@ router = APIRouter()
 async def verify_token_endpoint(
     payload: TokenVerifyRequest,
     db: AsyncSession = Depends(get_db),
-    _admin: User = Depends(require_admin),  # TODO(T08): internal auth 교체 (§11 A6)
+    _: None = Depends(require_internal_token),
 ) -> TokenVerifyResponse:
     token = await token_service.verify_connect_token(db, payload.token)
     if token is None:

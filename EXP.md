@@ -11,7 +11,7 @@
 
 - 총 22개 태스크. 카테고리: 백엔드 8 / 프런트엔드 4 / 풀스택 2 / 기타(Host·Client·인증·인프라·운영) 8.
 - PRD Feature 매핑: F1=T04a·T16(개발) + T01·T04b(운영 전환), F2=T08·T13·T14·T17, F3=T07, F4=T09·T12·T15, F5=T06·T11·T17·T18.
-- 크리티컬 패스(개발 트랙): **T03 → T04a → T05 → T07 → T08 → T14 → T17** — Mock 인증 위에서 "원클릭 접속(입력 0개)" KPI 달성까지의 최단 경로. 외부 행정 의존 없음. 진행률 5/7 (T03/T04a/T05/T07/T17 완료, T08·T14 대기). 비크리티컬 T06·T11·T16 완료(2026-05-15), T21 캘린더·바로접속 통합 완료(2026-05-18).
+- 크리티컬 패스(개발 트랙): **T03 → T04a → T05 → T07 → T08 → T14 → T17** — Mock 인증 위에서 "원클릭 접속(입력 0개)" KPI 달성까지의 최단 경로. 외부 행정 의존 없음. 진행률 6/7 (T03/T04a/T05/T07/T08/T17 완료, T14 대기). 비크리티컬 T06·T11·T16 완료(2026-05-15), T21 캘린더·바로접속 통합 완료(2026-05-18).
 - 운영 전환 트랙: **T01 → T04b** — CNU SSO 프로토콜 확정 + Provider 통합. T04a 머지 이후 별도 트랙으로 병행, 운영 출시 전 머지 필수.
 
 ### 0-1. PRD-instruction.md MVP 요구사항 ↔ 태스크
@@ -191,12 +191,21 @@
 ### T08. 자동 페어링 Broker 모듈
 - 카테고리: 백엔드
 - 의존성: T07, T10
+- 상태: **완료 (2026-05-22)** — Broker 백엔드. connect 토큰 + 클라이언트가 생성한 4자리 PIN을 받아 예약 호스트의 Sunshine `/api/pin`으로 중계. `POST /api/v1/pairing` 신설 + `services/pairing_service.py` + `/tokens/verify` 내부 인증(X-Internal-Token) 정비. 테스트 통과: pairing 12종(httpx MockTransport 가짜 Sunshine) + internal auth 3종 + 회귀 146종.
+- 결정 사항 (2026-05-22):
+  - **PIN 방향 = client→broker (A1)** — 페어링 PIN은 프로토콜상 Moonlight(클라이언트)가 생성한다(`computermanager.cpp::generatePinString()`). 클라이언트가 PIN 생성 + 페어링 핸드셰이크를 *먼저* 시작한 뒤 Broker에 `{connect_token, pin}`을 넘기고, Broker가 그 PIN을 Sunshine `/api/pin`으로 중계. 클라이언트가 먼저 시작하므로 Sunshine 페어링 세션이 이미 존재 → 타이밍 레이스 없음(지수 백오프는 짧은 레이스·일시 오류용 보험). 완료조건 2의 "PIN을 클라이언트에 전달"은 프로토콜 이해 전 표현 — 실제 방향은 반대.
+  - **`/pairing` 인증 = connect 토큰 자체** — 별도 세션/admin 없이 connect 토큰으로 인증(verify만, 소비는 스트림 시작 시점). Moonlight는 브라우저가 아니라 세션 쿠키가 없으므로 토큰이 곧 인증 수단.
+  - **내부 인증 = X-Internal-Token (§11 A6 해소)** — `/tokens/verify`의 임시 `require_admin`을 `X-Internal-Token` 헤더 공유 비밀로 교체(`require_internal_token` 의존성 + `Settings.internal_api_token` + production 부팅 가드). mTLS 대신 공유 비밀 — v1 단순성.
+  - **confighttp 포트 = 47990 고정** — Sunshine confighttp(`/api/pin`)는 스트리밍 포트(`hosts.sunshine_port`, 기본 47984)와 별개. `Settings.sunshine_config_port`. 자가서명 HTTPS라 `verify=False`(`sunshine_tls_verify`) — 캠퍼스 LAN 전제, cert pinning은 후속 강화.
+  - **`broker_api_token` = 호스트별 컬럼** — `hosts.sunshine_broker_token`(nullable). Sunshine `sunshine.conf`의 `broker_api_token`과 짝. Broker가 raw로 제시해야 하므로 해시 불가 — 평문 저장, 응답 스키마·로그·audit에 미노출.
+  - **v1 = 백엔드 전용** — T14(Moonlight 측 자동화)·T09(라이프사이클) 미구현이라 엔드포인트는 MockTransport 통합테스트 + 실호스트 수동 e2e로 검증, 실제 Moonlight 배선은 T14 위임. Sunshine→Broker `/tokens/verify` 콜백은 범위 밖(필요 시 `host-patches/sunshine/` 후속 패치).
+  - **Broker 우회 경계** — T08은 *새 페어링*을 Broker 독점 경로로 만든다(PIN 주입 크리덴셜을 학생이 못 가짐). 1차 자물쇠는 강의실 PC Sunshine 웹UI 비밀번호 — 강력·비밀·PC별 고유로 설정(T20 배포 요건; 학생이 47990 로그인 페이지 도달 자체는 막을 수 없다고 가정). *기존 페어링* 재사용 차단(예약 종료 후 직접 재접속)은 세션 종료 시 클라이언트 인증서 un-pair = T09/T12 몫.
 - 완료 조건
-  - [ ] Sunshine `/api/pin` 호출로 4자리 PIN 자동 입력 (T10 토큰 인증 사용)
-  - [ ] 클라이언트에 전달할 페어링 컨텍스트(IP, PIN, 인증서) 패키징
-  - [ ] 실패 시 재시도(지수 백오프) + 최종 실패 시 T19 폴백 트리거
-  - [ ] 모든 호출 audit log
-- 산출물: 자동 페어링 서비스, 통합 테스트(실 호스트)
+  - [x] Sunshine `/api/pin` 호출로 4자리 PIN 자동 입력 (T10 Bearer 토큰 인증 사용)
+  - [x] 페어링 컨텍스트 패키징 — `PairingResponse`(status + 호스트 접속정보). PIN은 client→broker 방향이라 "클라이언트가 제시", 인증서는 프로토콜이 핸드셰이크에서 자동 교환(Broker 미관여) — 완료조건 원문을 A1로 정정.
+  - [x] 실패 시 재시도(지수 백오프) + 최종 실패 시 dict-detail `fallback: manual_pin`로 T19 폴백 신호
+  - [x] 모든 호출 audit log — 결과 1행(`pairing_succeeded`/`pairing_failed`)
+- 산출물: `services/pairing_service.py` + `api/v1/pairing.py` + `api/schemas/pairing.py` + `hosts.sunshine_broker_token` 컬럼(마이그레이션 `0003`) + `PUT /hosts/{id}/sunshine-token` + `require_internal_token` 의존성 + `Settings` 신규 6종(internal_api_token, sunshine_config_port/tls_verify/request_timeout/pair_max_attempts/pair_backoff) + 테스트 2파일(test_pairing 12 / test_internal_auth 3). 실호스트 수동 e2e 절차는 plan 검증절 참조.
 
 ### T09. 세션 라이프사이클 매니저
 - 카테고리: 백엔드
@@ -530,7 +539,7 @@ flowchart LR
 - **A4/A5 (네트워크/원격 전원)**: T02 결과 기반. WoL 불가 시 T11 상시 가동 PC 가정으로 후퇴.
 - **알림 채널 2차안**: T15 1차는 Moonlight 토스트로 확정. Sunshine OSD 패치는 별도 이슈로 분리.
 - **fork 유지보수**: Sunshine/moonlight-qt 업스트림 추적 주기·담당자 미정 — T20 운영 런북에 포함 필요.
-- **A6 (검증 API 내부 인증, T07 결정, 2026-05-12)**: T07은 `Depends(require_admin)`로 임시 보호. T08 자동 페어링 모듈 + T10 Sunshine fork가 호출자가 되면 X-Internal-Token 헤더 또는 mTLS로 교체. T08 작업 시 우선 처리 — `tokens.py::verify_token_endpoint`에 TODO(T08) 주석 박힘.
+- **A6 (검증 API 내부 인증) — 해소 (2026-05-22, T08)**: `/tokens/verify`의 임시 `require_admin` 가드를 `X-Internal-Token` 헤더 인증으로 교체 완료 — `require_internal_token` 의존성(`api/deps.py`) + `Settings.internal_api_token` + production 부팅 가드(`_enforce_production_guards`). mTLS 대신 공유 비밀 — v1 단순성. `tokens.py`의 `TODO(T08)` 마커 제거. Sunshine→Broker `/tokens/verify` 콜백(B안)은 여전히 미구현 — 필요 시 `host-patches/sunshine/` 후속 패치.
 - **A7 (Host 메타 부분 선행, T16 결정, 2026-05-12 → T06 본구현으로 흡수 완료 2026-05-15)**: T16 캘린더 host 축 라벨링 차단 요소를 풀기 위해 `GET /api/v1/hosts` (read-only, 인증 필수)를 부분 선행. ingest(`POST /agents/heartbeat`) / 상태머신 / `/hosts/available` 필터 / 실시간 SSE는 T06 본구현이 흡수.
 - **A8 (T11 enrollment + ingest, 2026-05-14 → T06 본구현으로 흡수 완료 2026-05-15)**: T11 호스트 에이전트 v1이 broker에 박은 라우트는 `POST /api/v1/hosts`(admin, Host 생성 + agent_token raw 1회 응답) + `POST /api/v1/hosts/{id}/agent-token`(회전) + `POST /api/v1/agents/heartbeat`(Bearer agent token, last_heartbeat_at + host_metadata.metrics 갱신) 셋. 상태 머신(OFFLINE/IDLE/IN_USE/DEGRADED 전이 룰), `/hosts/available` 필터, SSE 푸시는 T06 본구현이 흡수. T11이 §A2(Host 시드 부재)도 enrollment 라우트로 정식 해소.
 - **A9 (HTTPException dict detail 일반화, 2026-05-14)**: `core/errors.py::_http_exc` 핸들러가 `exc.detail`이 dict면 `error`/`message` 키를 풀어 `ErrorResponse`에 반영, 나머지는 `detail`로 보존. 기존 라우터(string detail) 동작은 무변경. 신규 라우터(hosts.py admin)에서 정식 사용 — 라우트별 의미 에러를 도메인 예외 신설 없이 표현 가능.

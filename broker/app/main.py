@@ -35,6 +35,13 @@ def _enforce_production_guards(settings: Settings) -> None:
             )
         if not settings.session_cookie_secure:
             raise RuntimeError("production에서는 SESSION_COOKIE_SECURE=true가 강제됩니다.")
+        if not settings.internal_api_token or settings.internal_api_token in (
+            "change-me",
+            "dev-secret",
+        ):
+            raise RuntimeError(
+                "production에서는 INTERNAL_API_TOKEN을 안전한 값으로 반드시 주입해야 합니다."
+            )
 
 
 @asynccontextmanager

@@ -3,6 +3,8 @@
 - 1회 소비 회귀
 - 재발급 시 이전 토큰 일괄 revoke + audit token_revoke_previous
 - 동시 소비 race-safe (asyncio.gather)
+
+`/tokens/verify`는 T08부터 X-Internal-Token 헤더 인증 (§11 A6).
 """
 
 from __future__ import annotations
@@ -16,6 +18,8 @@ from httpx import AsyncClient
 
 if TYPE_CHECKING:
     from broker.tests.conftest import AuthClientFactory
+
+INTERNAL_HEADERS = {"X-Internal-Token": "test-internal-token"}
 
 
 def _grid_floor(dt: datetime) -> datetime:
@@ -43,18 +47,25 @@ async def _create_reservation(ac: AsyncClient, host_id: int) -> int:
 async def test_verify_consumes_once(auth_client: AuthClientFactory, host: int) -> None:
     """발급 → verify(consume=True) valid=True → 동일 raw 재verify valid=False."""
     owner = await auth_client()
-    admin = await auth_client(role="admin")
     rid = await _create_reservation(owner, host)
 
     issue = await owner.post(f"/api/v1/reservations/{rid}/connect")
     assert issue.status_code == 201
     raw = issue.json()["token"]
 
-    v1 = await admin.post("/api/v1/tokens/verify", json={"token": raw, "consume": True})
+    v1 = await owner.post(
+        "/api/v1/tokens/verify",
+        json={"token": raw, "consume": True},
+        headers=INTERNAL_HEADERS,
+    )
     assert v1.status_code == 200
     assert v1.json()["valid"] is True
 
-    v2 = await admin.post("/api/v1/tokens/verify", json={"token": raw, "consume": True})
+    v2 = await owner.post(
+        "/api/v1/tokens/verify",
+        json={"token": raw, "consume": True},
+        headers=INTERNAL_HEADERS,
+    )
     assert v2.status_code == 200
     body = v2.json()
     assert body["valid"] is False
@@ -67,7 +78,6 @@ async def test_verify_consumes_once(auth_client: AuthClientFactory, host: int) -
 async def test_reissue_revokes_previous(auth_client: AuthClientFactory, host: int) -> None:
     """발급 raw1 → 재 connect → raw2 발급 + audit token_revoke_previous + raw1 invalid."""
     owner = await auth_client()
-    admin = await auth_client(role="admin")
     rid = await _create_reservation(owner, host)
 
     r1 = await owner.post(f"/api/v1/reservations/{rid}/connect")
@@ -80,12 +90,20 @@ async def test_reissue_revokes_previous(auth_client: AuthClientFactory, host: in
     assert raw1 != raw2
 
     # raw1 — revoked → invalid.
-    v1 = await admin.post("/api/v1/tokens/verify", json={"token": raw1, "consume": False})
+    v1 = await owner.post(
+        "/api/v1/tokens/verify",
+        json={"token": raw1, "consume": False},
+        headers=INTERNAL_HEADERS,
+    )
     assert v1.status_code == 200
     assert v1.json()["valid"] is False
 
     # raw2 — 활성.
-    v2 = await admin.post("/api/v1/tokens/verify", json={"token": raw2, "consume": False})
+    v2 = await owner.post(
+        "/api/v1/tokens/verify",
+        json={"token": raw2, "consume": False},
+        headers=INTERNAL_HEADERS,
+    )
     assert v2.status_code == 200
     assert v2.json()["valid"] is True
 
@@ -118,7 +136,6 @@ async def test_concurrent_verify_only_one_consumes(
 ) -> None:
     """asyncio.gather로 동시 verify 2회 → 정확히 1번만 valid=True (DB 직렬화)."""
     owner = await auth_client()
-    admin = await auth_client(role="admin")
     rid = await _create_reservation(owner, host)
 
     issue = await owner.post(f"/api/v1/reservations/{rid}/connect")
@@ -127,8 +144,8 @@ async def test_concurrent_verify_only_one_consumes(
 
     payload = {"token": raw, "consume": True}
     r1, r2 = await asyncio.gather(
-        admin.post("/api/v1/tokens/verify", json=payload),
-        admin.post("/api/v1/tokens/verify", json=payload),
+        owner.post("/api/v1/tokens/verify", json=payload, headers=INTERNAL_HEADERS),
+        owner.post("/api/v1/tokens/verify", json=payload, headers=INTERNAL_HEADERS),
     )
     assert r1.status_code == 200
     assert r2.status_code == 200

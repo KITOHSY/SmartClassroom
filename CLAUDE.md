@@ -148,11 +148,22 @@ raw 토큰은 `secrets.token_urlsafe(32)` 로 만들고 **응답에만** 노출,
 
 새로운 멱등/race-safe 동작이 필요하면 같은 패턴: predicate UPDATE → rowcount 검사 → audit. ORM `flush()` 후 객체 비교로 분기하지 말 것.
 
-### 내부 호출 API는 require_admin 임시 가드 (T08까지)
+### 내부 호출 API는 X-Internal-Token (T08, §11 A6)
 
-T07 `POST /tokens/verify`처럼 **외부 사용자가 아닌 내부 컴포넌트**(T08 자동 페어링, T10 Sunshine fork 등)가 호출하는 엔드포인트는 현재 `Depends(require_admin)` 로 임시 보호하고 라우터 docstring에 `TODO(T08): internal auth 교체 (§11 A6)` 마커를 붙인다. T08에서 X-Internal-Token / mTLS 로 일괄 교체할 때 이 마커로 찾는다. 새 내부 API도 같은 마커 + 같은 임시 가드 패턴.
+`POST /tokens/verify`처럼 **외부 사용자가 아닌 내부 컴포넌트**(T08 자동 페어링, T10 Sunshine fork 등)가 호출하는 엔드포인트는 `Depends(require_internal_token)`(`api/deps.py`)로 보호한다 — `X-Internal-Token` 헤더를 `Settings.internal_api_token`과 상수시간 비교, 불일치 시 401 dict-detail. 사용자 세션쿠키·admin·에이전트 Bearer와 별개인 **4번째 인증 채널**. production은 `internal_api_token` 미설정/placeholder 시 부팅 거부(`_enforce_production_guards`). 새 내부 API도 같은 의존성. (T07~T08 이전엔 `require_admin` 임시 가드 + `TODO(T08)` 마커였고 T08에서 일괄 교체했다.)
 
-검증 응답 정책: **200 + `valid: bool`** 모델 — `HTTPException` 으로 4xx/5xx 분기하지 않는다. 호출자(T10 Sunshine fork 등)가 단순 JSON 파싱 + `valid` 플래그로 분기할 수 있게 하기 위함. 4xx는 admin/internal-auth 자체 실패에만.
+검증 응답 정책: **200 + `valid: bool`** 모델 — `HTTPException` 으로 4xx/5xx 분기하지 않는다. 호출자(T10 Sunshine fork 등)가 단순 JSON 파싱 + `valid` 플래그로 분기할 수 있게 하기 위함. 4xx는 internal-auth 자체 실패에만.
+
+### 자동 페어링 — Broker가 PIN을 중계 (T08)
+
+Moonlight↔Sunshine 페어링의 4자리 PIN을 사람이 입력하지 않도록 Broker가 중계한다. 여러 파일을 봐야 보이는 불변식:
+
+- **PIN은 클라이언트(Moonlight)가 생성** — 프로토콜상 호스트가 아니라 클라이언트가 PIN을 만든다. 따라서 흐름은 `client→broker→Sunshine`: 클라이언트가 PIN 생성 + 페어링 핸드셰이크를 **먼저** 시작 → `POST /api/v1/pairing`에 `{token, pin}` 전달 → `services/pairing_service.py::push_pin`이 Sunshine `/api/pin`으로 중계. 클라이언트가 먼저 시작하므로 Sunshine 페어링 세션이 이미 존재 — 지수 백오프는 짧은 레이스·일시 오류용 보험이지 본 메커니즘이 아니다.
+- **`/pairing` 인증 = connect 토큰 자체** — `verify_connect_token`으로 검증만 하고 **소비(consume)는 안 한다**(소비는 스트림 시작 시점). Moonlight는 세션 쿠키가 없으므로 토큰이 곧 인증. `/tokens/verify`(내부 인증 X-Internal-Token)와 다른 채널 — `/pairing`은 사용자 connect-token 채널이다. 섞지 말 것.
+- **Sunshine confighttp 포트는 47990** — `hosts.sunshine_port`(스트리밍, 기본 47984)와 **별개**. `Settings.sunshine_config_port`. 자가서명 HTTPS라 `verify=Settings.sunshine_tls_verify`(기본 False — 캠퍼스 LAN 전제, cert pinning은 후속 강화).
+- **`hosts.sunshine_broker_token`** — Sunshine `sunshine.conf`의 `broker_api_token`과 짝인 per-host Bearer 토큰. Broker가 raw로 제시해야 하므로 해시 불가 — **평문 컬럼**. 응답 스키마·로그·audit `detail` 어디에도 미노출. admin이 `POST /hosts`(생성 시) 또는 `PUT /hosts/{id}/sunshine-token`(기존 호스트)으로 등록.
+- **실패는 `fallback: manual_pin` 신호** — `pairing_service`의 도메인 예외(`HostNotPairableError`/`PairingUnreachableError`/`PairingRejectedError`)를 라우터가 422/502/409 dict-detail로 매핑, 전부 `fallback: manual_pin` 키 포함(T19 수동 PIN 폴백 신호). audit는 결과 1행(`pairing_succeeded`/`pairing_failed`)만 — 재시도마다 남기지 않는다.
+- **Broker 우회 경계** — T08은 *새 페어링*을 Broker 독점 경로로 만든다(PIN 주입 크리덴셜을 학생이 못 가짐). 단 강의실 PC Sunshine 웹UI 비번이 비밀·비기본값이어야 성립(T20 배포 요건). *기존 페어링* 재사용 차단은 세션 종료 시 인증서 un-pair = T09/T12. T14(Moonlight 자동화)·Sunshine→Broker `/tokens/verify` 콜백은 T08 범위 밖.
 
 ### 운영 가드는 lifespan에서
 

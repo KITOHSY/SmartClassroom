@@ -1,4 +1,13 @@
-from broker.app.api.v1 import agents, auth, host_events, hosts, meta, reservations, tokens
+from broker.app.api.v1 import (
+    agents,
+    auth,
+    host_events,
+    hosts,
+    meta,
+    pairing,
+    reservations,
+    tokens,
+)
 from fastapi import APIRouter
 
 api_router = APIRouter()
@@ -6,6 +15,8 @@ api_router.include_router(meta.router, tags=["meta"])
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(reservations.router, prefix="/reservations", tags=["reservations"])
 api_router.include_router(tokens.router, prefix="/tokens", tags=["tokens"])
+# T08 — 자동 페어링: connect 토큰 + PIN → Sunshine /api/pin 중계.
+api_router.include_router(pairing.router, prefix="/pairing", tags=["pairing"])
 # T16 차단 요소 해소용 read-only 라우터 + T11 admin enrollment — T06 본구현이 흡수.
 api_router.include_router(hosts.router, prefix="/hosts", tags=["hosts"])
 # T11 호스트 에이전트 ingest — heartbeat 등. T06 본구현이 상태머신/필터 흡수.

@@ -66,6 +66,20 @@ class Settings(BaseSettings):
     # OFFLINE detector tick 주기 (background task).
     host_status_monitor_interval_seconds: int = 60
 
+    # 내부 컴포넌트 인증 (T08, §11 A6) — X-Internal-Token 헤더 공유 비밀.
+    # /tokens/verify 등 머신-투-머신 엔드포인트 보호. production에서 미설정/placeholder면 부팅 거부.
+    internal_api_token: str | None = None
+
+    # 자동 페어링 — Sunshine confighttp 호출 (T08).
+    # confighttp 포트는 스트리밍 포트(hosts.sunshine_port, 기본 47984)와 별개로 47990 고정.
+    sunshine_config_port: int = 47990
+    # Sunshine은 자가서명 인증서 — 캠퍼스 LAN 전제로 검증 생략. cert pinning은 후속 강화.
+    sunshine_tls_verify: bool = False
+    sunshine_request_timeout_seconds: float = 5.0
+    # /api/pin 푸시 재시도 — 클라이언트가 페어링 세션을 막 띄운 직후의 짧은 레이스를 흡수.
+    sunshine_pair_max_attempts: int = 5
+    sunshine_pair_backoff_base_seconds: float = 0.5
+
 
 @lru_cache
 def get_settings() -> Settings:

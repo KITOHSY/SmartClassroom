@@ -45,6 +45,10 @@ def _set_test_env() -> None:
     # T06 — 짧게 줄여 monitor task 회귀 테스트가 빠르게(2s tick / 10s offline) 실행 가능하게.
     os.environ.setdefault("HOST_OFFLINE_AFTER_SECONDS", "10")
     os.environ.setdefault("HOST_STATUS_MONITOR_INTERVAL_SECONDS", "2")
+    # T08 — /tokens/verify·/pairing 내부 인증용 공유 비밀 (§11 A6).
+    os.environ.setdefault("INTERNAL_API_TOKEN", "test-internal-token")
+    # T08 — 페어링 재시도 백오프를 짧게 줄여 retry 회귀 테스트가 빠르게 실행되게.
+    os.environ.setdefault("SUNSHINE_PAIR_BACKOFF_BASE_SECONDS", "0.01")
 
 
 @pytest_asyncio.fixture

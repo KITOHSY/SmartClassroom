@@ -5,10 +5,13 @@
   (errors.py 핸들러가 Accept 분기 응답으로 변환)
 - get_optional_user: 인증 선택 — None 허용
 - require_admin: admin role 강제 (HTTP 403)
+- require_internal_token: X-Internal-Token 헤더 강제 — 내부 컴포넌트 전용 (T08, §11 A6)
 - get_agent_host: Bearer agent token 검증 → (Host, Token) 반환 (T11)
 """
 
 from __future__ import annotations
+
+import hmac
 
 from broker.app.core.auth_responses import UnauthenticatedError
 from broker.app.core.config import get_settings
@@ -29,6 +32,7 @@ __all__ = [
     "get_host_event_broker",
     "get_optional_user",
     "require_admin",
+    "require_internal_token",
 ]
 
 
@@ -54,6 +58,26 @@ async def require_admin(user: User = Depends(get_current_user)) -> User:
     if user.role != "admin":
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="관리자 권한 필요")
     return user
+
+
+async def require_internal_token(request: Request) -> None:
+    """T08 (§11 A6) — 내부 컴포넌트 전용 X-Internal-Token 헤더 검증.
+
+    `/tokens/verify` 등 머신-투-머신 엔드포인트 보호. 사용자 세션쿠키·admin·에이전트
+    Bearer와 무관한 별도 인증 채널. `settings.internal_api_token`과 상수시간 비교하며,
+    토큰 미설정 시 fail-closed(401). 호출자(Sunshine fork 등)가 단순 분기하도록 401만 사용.
+    """
+    settings = get_settings()
+    expected = settings.internal_api_token
+    provided = request.headers.get("x-internal-token", "")
+    if not expected or not provided or not hmac.compare_digest(provided, expected):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={
+                "error": "invalid_internal_token",
+                "message": "유효한 X-Internal-Token 헤더가 필요합니다",
+            },
+        )
 
 
 async def get_host_event_broker(request: Request) -> HostEventBroker:

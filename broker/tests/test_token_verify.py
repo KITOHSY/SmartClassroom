@@ -1,6 +1,6 @@
 """T07 토큰 검증 API 테스트.
 
-- admin 가드
+- 내부 인증(X-Internal-Token) 가드 (T08 §11 A6)
 - 무효 시그니처
 - 만료 토큰
 - consume=False 비파괴
@@ -17,6 +17,9 @@ from httpx import AsyncClient
 
 if TYPE_CHECKING:
     from broker.tests.conftest import AuthClientFactory
+
+# conftest._set_test_env의 INTERNAL_API_TOKEN 기본값과 일치.
+INTERNAL_HEADERS = {"X-Internal-Token": "test-internal-token"}
 
 
 def _grid_floor(dt: datetime) -> datetime:
@@ -48,14 +51,23 @@ async def _issue_token(ac: AsyncClient, host_id: int) -> tuple[int, str]:
 
 
 @pytest.mark.asyncio
-async def test_verify_requires_admin(auth_client: AuthClientFactory, host: int) -> None:
-    """일반 user 세션 → 403."""
+async def test_verify_requires_internal_token(auth_client: AuthClientFactory, host: int) -> None:
+    """X-Internal-Token 헤더 없으면 401 — admin 세션으로도 통과 못 함 (§11 A6)."""
     owner = await auth_client()
+    admin = await auth_client(role="admin")
     _, raw = await _issue_token(owner, host)
 
-    # owner는 admin이 아님.
-    r = await owner.post("/api/v1/tokens/verify", json={"token": raw, "consume": False})
-    assert r.status_code == 403
+    # 헤더 없음 → 401 (admin 세션이어도 더 이상 통과 못 함).
+    r = await admin.post("/api/v1/tokens/verify", json={"token": raw, "consume": False})
+    assert r.status_code == 401
+
+    # 올바른 헤더 → 200.
+    r2 = await admin.post(
+        "/api/v1/tokens/verify",
+        json={"token": raw, "consume": False},
+        headers=INTERNAL_HEADERS,
+    )
+    assert r2.status_code == 200
 
 
 @pytest.mark.asyncio
@@ -63,10 +75,11 @@ async def test_verify_invalid_signature(
     auth_client: AuthClientFactory,
 ) -> None:
     """무작위 base64 → 200 valid=False reason=invalid_or_expired."""
-    admin = await auth_client(role="admin")
-    r = await admin.post(
+    caller = await auth_client()
+    r = await caller.post(
         "/api/v1/tokens/verify",
         json={"token": "AAAAAAAAAAAAAAAAAAAAAAAA", "consume": False},
+        headers=INTERNAL_HEADERS,
     )
     assert r.status_code == 200
     body = r.json()
@@ -81,7 +94,6 @@ async def test_verify_invalid_signature(
 async def test_verify_expired_token(auth_client: AuthClientFactory, host: int) -> None:
     """DB 직접 UPDATE로 expires_at 과거화 → valid=False."""
     owner = await auth_client()
-    admin = await auth_client(role="admin")
     _, raw = await _issue_token(owner, host)
 
     import hashlib
@@ -99,7 +111,11 @@ async def test_verify_expired_token(auth_client: AuthClientFactory, host: int) -
         )
         await session.commit()
 
-    r = await admin.post("/api/v1/tokens/verify", json={"token": raw, "consume": True})
+    r = await owner.post(
+        "/api/v1/tokens/verify",
+        json={"token": raw, "consume": True},
+        headers=INTERNAL_HEADERS,
+    )
     assert r.status_code == 200
     body = r.json()
     assert body["valid"] is False
@@ -112,14 +128,21 @@ async def test_verify_consume_false_does_not_consume(
 ) -> None:
     """consume=False 후 동일 토큰 consume=True 호출 → 두 번째도 valid=True."""
     owner = await auth_client()
-    admin = await auth_client(role="admin")
     _, raw = await _issue_token(owner, host)
 
-    r1 = await admin.post("/api/v1/tokens/verify", json={"token": raw, "consume": False})
+    r1 = await owner.post(
+        "/api/v1/tokens/verify",
+        json={"token": raw, "consume": False},
+        headers=INTERNAL_HEADERS,
+    )
     assert r1.status_code == 200
     assert r1.json()["valid"] is True
 
-    r2 = await admin.post("/api/v1/tokens/verify", json={"token": raw, "consume": True})
+    r2 = await owner.post(
+        "/api/v1/tokens/verify",
+        json={"token": raw, "consume": True},
+        headers=INTERNAL_HEADERS,
+    )
     assert r2.status_code == 200
     assert r2.json()["valid"] is True
 
@@ -128,10 +151,13 @@ async def test_verify_consume_false_does_not_consume(
 async def test_verify_response_payload_shape(auth_client: AuthClientFactory, host: int) -> None:
     """valid=True 응답에 user_id/host_id/reservation_id/expires_at 모두 채워짐."""
     owner = await auth_client()
-    admin = await auth_client(role="admin")
     rid, raw = await _issue_token(owner, host)
 
-    r = await admin.post("/api/v1/tokens/verify", json={"token": raw, "consume": False})
+    r = await owner.post(
+        "/api/v1/tokens/verify",
+        json={"token": raw, "consume": False},
+        headers=INTERNAL_HEADERS,
+    )
     assert r.status_code == 200
     body = r.json()
     assert body["valid"] is True

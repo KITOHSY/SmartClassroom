@@ -18,7 +18,13 @@ from __future__ import annotations
 from datetime import datetime
 
 from broker.app.api.deps import get_current_user, get_db, require_admin
-from broker.app.api.schemas.host import HostAvailable, HostCreate, HostRead, HostWithAgentToken
+from broker.app.api.schemas.host import (
+    HostAvailable,
+    HostCreate,
+    HostRead,
+    HostSunshineTokenUpdate,
+    HostWithAgentToken,
+)
 from broker.app.core.errors import InvalidReservationWindowError
 from broker.app.domain.host import Host
 from broker.app.domain.user import User
@@ -150,6 +156,7 @@ async def create_host_endpoint(
         location=payload.location,
         ip_address=payload.ip_address,
         sunshine_port=payload.sunshine_port,
+        sunshine_broker_token=payload.sunshine_broker_token,
         gpu_model=payload.gpu_model,
     )
     db.add(host)
@@ -189,3 +196,26 @@ async def rotate_agent_token_endpoint(
     raw_token, _, revoked = await issue_agent_token(db, host=host, issued_by=admin)
     await db.commit()
     return _to_with_token(host, raw_token, revoked)
+
+
+@router.put("/{host_id}/sunshine-token", response_model=HostRead)
+async def set_sunshine_token_endpoint(
+    host_id: int,
+    payload: HostSunshineTokenUpdate,
+    db: AsyncSession = Depends(get_db),
+    _admin: User = Depends(require_admin),
+) -> HostRead:
+    """T08 — 기존 호스트에 Sunshine 페어링 토큰(`broker_api_token`)을 등록/회전.
+
+    응답(HostRead)에는 토큰을 노출하지 않는다 — 아웃바운드 시크릿. 호스트 미존재 시 404.
+    """
+    host = await db.get(Host, host_id)
+    if host is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "host_not_found", "host_id": host_id},
+        )
+    host.sunshine_broker_token = payload.sunshine_broker_token
+    await db.commit()
+    await db.refresh(host)
+    return HostRead.model_validate(host)

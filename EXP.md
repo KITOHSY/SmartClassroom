@@ -310,7 +310,8 @@
   - **PIN-relay 모델 — connect 토큰은 Broker로** — T14는 새 암호화·인증서 발급이 아니라 기존 조각(T13 토큰 보관 / `ComputerManager::pairHost` / T08 Broker PIN relay / 업스트림 스트림 경로)을 순서대로 배선한 오케스트레이션. 페어링 PIN은 클라이언트가 만들고 Broker가 Sunshine에 중계 — 토큰은 Broker 호출 인증으로만.
   - **`CliStartStream::Launcher` 미재사용** — 업스트림 CLI-stream 런처는 `initialView`+context-property 결합이라 *이미 실행 중인* Moonlight에 URL이 forward되는 경우를 못 다룬다. 그래서 런처 대신 `StreamSegue.qml`+`Session` 핸드오프 패턴만 재사용하고, 자동연결 상태머신은 `ComputerManager` 내부 시그널 구동으로 두 진입 경로(새 실행 / forwarded)를 일관 처리.
   - **헤드리스 완료는 별도 채널** — `PendingPairingTask`에 `headless` 플래그를 둬 자동 페어링 완료가 공용 `pairingCompleted` 시그널을 안 타게 함. `ComputerModel`/CLI pair가 중복 에러 다이얼로그를 띄우는 것 방지.
-- 산출물: 패치 0009/0010 (`client-patches/moonlight-qt/`), `BUILD.md` §5.9 입력 0회 수동 e2e 체크리스트.
+- e2e 검증 (2026-05-24, 단일 PC — host·Broker·Sunshine·Moonlight 한 PC): 4종 시나리오 전부 통과 — ① 미페어링 호스트 원클릭 자동 페어링→스트림(클릭→스트림 ~4s, **입력 0회 KPI 달성**), ② 이미 페어링됨 `(already paired)` 페어링 건너뛰고 바로 스트림(~3s), ③ Broker 미도달 `broker_unreachable` 폴백(~6s, hang 없음), ④ 페어링 실패(잘못된 `sunshine_broker_token`) `sunshine_unauthorized` 폴백(~1s, hang 없음). 같은 PC loopback이라 스트림 화면은 검정(`BUILD.md` §7) — 정상. e2e 중 발견한 T14 버그 1건(broker URL percent-encoding 디코딩 누락 — `main.cpp` 두 곳 `queryItemValue("broker", QUrl::FullyDecoded)`)은 보정 커밋(`fa743449`) + 패치 **0011-T14-decode-percent-encoded-broker-URL-param.patch**로 분리.
+- 산출물: 패치 0009/0010/0011 (`client-patches/moonlight-qt/`), `BUILD.md` §5.9 입력 0회 수동 e2e 체크리스트.
 
 ---
 

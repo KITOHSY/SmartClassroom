@@ -28,8 +28,10 @@ git am D:\Hongsun\SmartClassroom\client-patches\moonlight-qt\*.patch
 ```
 
 `git am`이 실패하면 업스트림 태그가 v6.1.0이 맞는지 / submodule이 모두 init 되어
-있는지 / 패치 파일들이 0001~0010 순서대로 적용되는지 확인. 0001~0008 = T13(0007/0008은
-빌드 보정), 0009/0010 = T14(자동 연결 — 빌드 보정 없이 첫 빌드 통과).
+있는지 / 패치 파일들이 0001~0011 순서대로 적용되는지 확인. 0001~0008 = T13(0007/0008은
+빌드 보정), 0009/0010 = T14 본체(자동 연결 — 빌드 보정 없이 첫 빌드 통과), 0011 = T14
+e2e 보정(broker URL percent-encoding 디코딩 — `main.cpp` 두 곳에서
+`queryItemValue("broker", QUrl::FullyDecoded)`).
 
 ## 3. 빌드 (Qt 6.7 + MSVC v143/v144)
 

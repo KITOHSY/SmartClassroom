@@ -27,12 +27,13 @@ SmartClassroom 포크가 [moonlight-qt](https://github.com/moonlight-stream/moon
 | 0008 | `0008-T13-forward-declare-scT13DispatchMoonlightUrl-for-re.patch` | **빌드 보정** — 0007이 옮긴 호출이 함수 정의보다 앞에 있어 MSVC C3861. `scT13StartSingleInstanceServer` 정의 위에 `scT13DispatchMoonlightUrl` forward declaration 한 줄 추가 | `app/main.cpp` |
 | 0009 | `0009-T14-add-ScBrokerClient-for-Broker-pairing-relay.patch` | **T14** — `ScBrokerClient`: Broker `POST /api/v1/pairing`로 `{connect-token, PIN}` 전송(`QNetworkAccessManager`+`QJsonDocument`). 헤드리스 페어링이 PIN 입력 없이 완료되게 하는 아웃바운드 채널 | `app/backend/scbrokerclient.{h,cpp}`(신규), `app/app.pro` |
 | 0010 | `0010-T14-automatic-connect-broker-URL-headless-pairing-au.patch` | **T14** — moonlight:// URL `broker` 파라미터 + 헤드리스 페어링(`ComputerManager::beginHeadlessPairing`, `NvPairingManager` phase-1 bounded timeout) + 자동연결 상태머신(`ComputerManager`) + `main.qml` 진행 팝업·`StreamSegue` 자동 진입 | `app/backend/computermanager.{h,cpp}`·`nvcomputer.h`·`nvpairingmanager.{h,cpp}`, `app/cli/commandlineparser.{h,cpp}`, `app/gui/main.qml`, `app/main.cpp` |
+| 0011 | `0011-T14-decode-percent-encoded-broker-URL-param.patch` | **T14 e2e 보정** — `scT13ExpandMoonlightConnectUrl`·`scT13DispatchMoonlightUrl`에서 `queryItemValue("broker")` 기본 `QUrl::PrettyDecoded` 모드가 `:` `/` (`%3A`/`%2F`)를 디코딩 안 해 `ScBrokerClient`가 `bad_broker_url`로 거부하던 버그. 두 곳 모두 `QUrl::FullyDecoded`로 변경. e2e(2026-05-24)에서 발견 | `app/main.cpp` |
 
-T13 합계 `app/` + `wix/` 9파일 / 약 +515줄, −32줄. T14 추가 `app/` 12파일 / 약 +659줄,
-−44줄 (0009 신규 클래스 +120, 0010 본체 +539/−44). 0007/0008은 T10 0003/0004와 같은
-부류의 빌드 보정 패치 누적 — 본래 0002와 한 커밋이어야 했으나 이미 export된 시리즈를
-보존하기 위해 별도 패치로 분리. T14(0009/0010)는 빌드 보정 없이 첫 빌드 통과
-(2026-05-22, Qt 6.7.3 `msvc2019_64`).
+T13 합계 `app/` + `wix/` 9파일 / 약 +515줄, −32줄. T14 추가 `app/` 12파일 / 약 +663줄,
+−46줄 (0009 신규 클래스 +120, 0010 본체 +539/−44, 0011 e2e 보정 +2/−2). 0007/0008은
+T10 0003/0004와 같은 부류의 빌드 보정 패치, 0011은 e2e 보정 패치 — 본래 0010과 한
+커밋이어야 했으나 이미 export 후 e2e에서 발견된 거라 별도 패치로 분리. 4종 e2e 시나리오
+(①미페어링 KPI·②페어링됨·③Broker미도달·④페어링실패) 전부 통과 (2026-05-24).
 
 ## 무엇을 / 왜 (T13)
 

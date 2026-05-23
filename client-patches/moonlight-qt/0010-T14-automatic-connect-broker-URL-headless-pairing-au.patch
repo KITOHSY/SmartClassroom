@@ -1,7 +1,7 @@
 From e4b04a18d107b825fb684983d79b7459da7d4520 Mon Sep 17 00:00:00 2001
 From: KITOHSY <hongsun900912@gmail.com>
 Date: Fri, 22 May 2026 17:22:10 +0900
-Subject: [PATCH 10/10] =?UTF-8?q?T14:=20automatic=20connect=20=E2=80=94=20?=
+Subject: [PATCH 10/11] =?UTF-8?q?T14:=20automatic=20connect=20=E2=80=94=20?=
  =?UTF-8?q?broker=20URL,=20headless=20pairing,=20auto-stream?=
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

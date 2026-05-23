@@ -1,7 +1,7 @@
 From 25a429ac657324feb640f2484b1036979bd4a9e8 Mon Sep 17 00:00:00 2001
 From: KITOHSY <hongsun900912@gmail.com>
 Date: Fri, 22 May 2026 17:21:54 +0900
-Subject: [PATCH 09/10] T14: add ScBrokerClient for Broker pairing relay
+Subject: [PATCH 09/11] T14: add ScBrokerClient for Broker pairing relay
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit

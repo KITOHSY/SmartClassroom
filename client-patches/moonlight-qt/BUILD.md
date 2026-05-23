@@ -135,7 +135,7 @@ start "" "moonlight://connect?token=ABC1234567890123456789&host-id=42&host=192.0
 기대 동작:
 
 - Moonlight 창이 뜬다 (PcView).
-- moonlight-qt 콘솔/로그 (Windows: `%LOCALAPPDATA%\Moonlight Game Streaming Project\Moonlight.log`)에 다음 라인이 찍힌다:
+- moonlight-qt 콘솔/로그 (Windows: `%LOCALAPPDATA%\Temp\Moonlight-<unix_timestamp>.log`)에 다음 라인이 찍힌다:
   - `T13 connect requested host= "192.0.2.10" port= 47989 host-id= 42 token-prefix= "ABC12345"`
   - `T13: requesting addNewHost for "192.0.2.10" port 47989 host-id= 42`
   - polling이 host에 도달하면 (192.0.2.10이 실제 Sunshine을 띄우고 있어야 함):
@@ -161,7 +161,7 @@ T10 패치본 Sunshine 호스트(`sunshine.conf`에 `broker_api_token` 설정) +
 포함한 URL을 생성. T14 URL은 `moonlight://connect?token=&host-id=&host=&port=&broker=`
 형태 — `broker`는 Broker base URL(예: `http://192.168.1.50:8000`).
 
-로그는 `%LOCALAPPDATA%\Moonlight Game Streaming Project\Moonlight.log` 의 `T14:`
+로그는 `%LOCALAPPDATA%\Temp\Moonlight-<unix_timestamp>.log` 의 `T14:`
 라인으로 추적 (`T14: auto-connect started` / `headless pairing` / `Broker relayed
 PIN` / `auto-connect streaming` / `auto-connect failed`).
 

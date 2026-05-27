@@ -20,12 +20,12 @@
 | --- | --- |
 | 포털 연동 예약 페이지(추가 로그인 불필요) | T04a, T04b, T16 (T04b 머지 전까지 Mock 운영, T01은 행정 트랙으로 병행) |
 | 동적 접속 토큰 발급 | T07 |
-| 세션 관리 및 자동 차단(10분 전 알림 + 강제 종료) | T09, T15 |
+| 세션 관리 및 자동 차단 (cleanup 10분 + 명시/암묵 종료 분류 + grace 최대 10분 — §11 A14) | T09, T15, + T11 후속(셧다운 훅·cleanup RPC) + T14 후속 0012~0016 |
 | 호스트 상태 모니터링 대시보드 | T18 |
 | 원클릭 접속 버튼 | T13, T14, T17 |
 | 백그라운드 인증 연동(서버단 자동 PIN) | T08, T10, T14 |
 | 실시간 PC 상태 체커(가용 호스트만 노출) | T06, T11 |
-| 세션 강제 종료 및 초기화 | T09, T12 |
+| 세션 강제 종료 및 초기화 (명시 종료 = 사용권 반납·자원 즉시 반환; cleanup 자동 실행) | T09, T12 (cleanup 스크립트·Windows 셧다운 훅) |
 
 ### 0-2. PRD KPI ↔ 측정 책임
 
@@ -146,6 +146,7 @@
   - [x] 캘린더 뷰 집계 — `GET /reservations/calendar?from=&to=&host_id=` 30분 grid 매트릭스, 외부 사용자는 `user_id` 마스킹
   - [x] 단위/통합 테스트 26건 — 충돌 4 / 권한 5 / boundary 8 / quota 2 / CRUD 3 / 캘린더 4
 - 산출물: `broker/app/services/reservation.py` + `broker/app/api/v1/reservations.py` + `broker/app/api/schemas/reservation.py` + 테스트 6파일 + 도메인 예외 3종(`ReservationConflictError(409)`/`ReservationQuotaError(429)`/`InvalidReservationWindowError(422)`) + audit log 이벤트 `reservation_create`/`reservation_cancel`
+- (2026-05-27 영향 — §11 A14) cleanup 구간은 슬롯/길이/quota 정책과 **직교** — `_validate_window`/`_ensure_grid`/`_validate_quota`는 예약 시간 `[starts_at, ends_at)` 전체 기준 그대로. cleanup은 lifecycle(T09) 책임이며 예약 생성 검증에는 영향 없음. 30분 예약 → 실 사용 20분은 의식적 수용(캘린더 모달이 안내). EXCLUDE GIST predicate는 T09 마이그레이션이 `WHERE status = 'CONFIRMED'` 단독으로 보정 — `'COMPLETED'` 의미가 "정상 종료, 자원 반환됨"(A14 P4)으로 재정의되기 때문.
 
 ### T06. 호스트 상태 집계 + 가용 PC 노출 API
 - 카테고리: 백엔드
@@ -187,6 +188,7 @@
   - [x] 위·변조 방지 = sha256(raw) + jti UNIQUE; replay 방지 = 재발급 시 이전 활성 토큰 일괄 revoke
   - [x] 검증 API POST /tokens/verify (Broker 내부, 일단 require_admin)
 - 산출물: token_service.py + tokens.py 라우터 + token 스키마 + audit 이벤트 4종(token_issue/consume/verify_failure/revoke_previous) + Settings.connect_token_grace_seconds + 테스트 3파일 + 도메인 예외 InvalidConnectWindowError(422)
+- (2026-05-27 영향 — §11 A14 P6) `expires_at = reservation.ends_at - reservation_cleanup_minutes` (= `cleanup_starts_at`)로 변경. 발급 게이트도 `starts_at - connect_token_grace_seconds ~ cleanup_starts_at`. **단 grace 구간(T09 관리)에는 이미 발급된 토큰의 verify 통과 유지** — `verify_connect_token`이 `(token.expires_at < now)` 단순 비교가 아니라 `(now <= expires_at) OR (T09 grace_state가 활성이고 token이 그 reservation에 속함)`로 확장. cleanup 시작 시 `revoke_active_tokens_for_reservation` 호출 — 그 이후 verify는 revoked 분기로 실패. 명시 종료(T09 `POST /terminate`) 시에도 즉시 revoke.
 
 ### T08. 자동 페어링 Broker 모듈
 - 카테고리: 백엔드
@@ -207,16 +209,47 @@
   - [x] 모든 호출 audit log — 결과 1행(`pairing_succeeded`/`pairing_failed`)
 - 산출물: `services/pairing_service.py` + `api/v1/pairing.py` + `api/schemas/pairing.py` + `hosts.sunshine_broker_token` 컬럼(마이그레이션 `0003`) + `PUT /hosts/{id}/sunshine-token` + `require_internal_token` 의존성 + `Settings` 신규 6종(internal_api_token, sunshine_config_port/tls_verify/request_timeout/pair_max_attempts/pair_backoff) + 테스트 2파일(test_pairing 12 / test_internal_auth 3). 실호스트 수동 e2e 절차는 plan 검증절 참조.
 
-### T09. 세션 라이프사이클 매니저
+### T09. 세션 라이프사이클 매니저 (cleanup / grace / 명시-암묵 종료 분류)
 - 카테고리: 백엔드
-- 의존성: T05, T08
+- 의존성: T05, T08, T11 후속(heartbeat `connection_state` + `agent.execute_cleanup` RPC), T14 후속(Moonlight 신호 라우트 0012~0016)
+- 상태: 미시작
+- 정책 출처: §11 A14 (cleanup 10분 / grace 최대 10분 / 명시-암묵 분류 / 명시 종료 = 사용권 반납). 수치·정의는 A14가 진실이며 본문은 구현 구조만 다룬다.
+- 결정 사항:
+  1. **예약 phase 상태 머신**: `SCHEDULED → ACTIVE → (GRACE) → CLEANUP → ENDED`. phase는 별도 컬럼이 아닌 **시각 기반 파생 계산** (`now` + `reservation.starts_at`/`ends_at`/`explicit_terminated_at` + Broker가 관리하는 grace 타이머 상태). 마이그레이션 최소화 — 시각이 진실. UI/감사용으로만 `services/reservation_lifecycle.py::compute_phase(reservation, now, grace_state)` 헬퍼.
+  2. **이벤트 분류 규칙 (Broker 단독 판정)**: explicit 종료 = Moonlight가 `POST /reservations/{id}/terminate {reason: "user_modal"|"shortcut"|"host_shutdown"}` 호출한 경우 **만**. 그 외 disconnect 신호(T11 heartbeat의 `session.connection_state="disconnected"`, Moonlight `/disconnect-signal`, sunshine 프로세스 down, heartbeat 누락) = 암묵. **기본값 안전** = Broker가 explicit를 못 받았으면 무조건 암묵 → grace.
+  3. **신규 라우트 2종** (모두 connect token bearer 인증, 사용자 본인 or admin):
+     - `POST /reservations/{id}/terminate` — explicit 종료 트리거. body: `{reason: "user_modal"|"shortcut"|"host_shutdown"}`. 동작: cleanup 즉시 시작 + token revoke + audit `reservation_terminate_explicit`. 응답: `{phase: "cleanup", cleanup_starts_at, ends_at_adjusted}`.
+     - `POST /reservations/{id}/disconnect-signal` — Moonlight가 비정상 disconnect 감지 시 best-effort 신호. 동작: grace 타이머 시작(이미 시작됐으면 noop). 응답: `{phase: "grace", grace_start, grace_end}`.
+  4. **암묵 종료 감지 채널 (Broker 측 다중 경로)** — Moonlight 신호가 도착하지 않는 경우에도 grace를 시작해야 함:
+     - T11 heartbeat의 `session.connection_state="disconnected"` 수신 → 활성 예약 있으면 grace 시작.
+     - T11 heartbeat의 `session.sunshine_running=false` 지속(2회 연속) → 활성 예약 있으면 grace 시작.
+     - heartbeat 자체 누락 → T06 monitor가 호스트를 OFFLINE 전이할 때 활성 예약이 있으면 grace 시작.
+     세 경로가 동일 grace 타이머를 공유(idempotent — 이미 시작된 grace는 재시작하지 않음, P2 의 분 단위 올림 기준 `t_disc`를 첫 신호 시각으로 고정).
+  5. **스케줄러 = APScheduler in-process** (단일 broker 인스턴스 가정 — §11 A10 따름). 작업 종류 3종:
+     - (a) `cleanup_starts_at` 도달 시 Moonlight에 명시 종료 모달 push 신호 (T14 후속 0014가 클라이언트 측 타이머도 동시 구현 — 이중 안전망).
+     - (b) grace 만료 시 cleanup 시작 (자동 cleanup 전이).
+     - (c) cleanup 만료 시 `status='COMPLETED'` + `ends_at=now` 단축 + 호스트 IDLE 전이 + token revoke + T12 호출 결과 audit.
+     멀티 인스턴스 스케일아웃 시 외부 큐(Celery/Redis 등) 도입 — §11 A10과 같은 시점에 검토.
+  6. **Cleanup 실행 = T11 agent RPC**. `agent.execute_cleanup(reason: str) → {success: bool, details: dict}` (T11 후속이 인터페이스 제공). Broker가 호출 후 결과를 audit (`cleanup_succeeded` / `cleanup_failed`). 실패해도 `status='COMPLETED'` 전이는 진행하되 audit·관리자 SSE로 alert.
+  7. **DB 변경 (마이그레이션 필요)**:
+     - **EXCLUDE GIST predicate 변경**: 현행 `WHERE status IN ('CONFIRMED','COMPLETED')` → `WHERE status = 'CONFIRMED'`. COMPLETED는 "정상 종료된 예약"(A14 P4)이므로 다른 사용자의 즉시 사용을 차단하면 안 됨. 마이그레이션은 제약 drop & recreate (CONFIRMED 그룹만 GIST 색인). 0001 `reservations_no_overlap` 제약 보정.
+     - 신규 컬럼 `reservations.explicit_terminated_at TIMESTAMPTZ NULL` (명시 종료 시각, audit/디버그·phase 계산에 사용).
+     - 신규 컬럼 `reservations.grace_started_at TIMESTAMPTZ NULL` (암묵 종료 시 분 단위 올림 시각 = P2의 `t_grace_start`, 첫 신호 시각으로 고정).
+     - `status` 도메인에 `'COMPLETED'`는 이미 존재 — 의미만 재정의(사용처 없던 enum 값을 정상 종료에 할당).
+  8. **호스트 상태 전이 = T06과 통합**: cleanup 시작 시 호스트 status는 그대로 IN_USE(사용자 작업물·세션이 아직 살아있을 수 있어 다음 사용자가 못 들어옴 — phase가 차단 책임), cleanup 만료 시 IDLE 전이(`transition_host` 기존 헬퍼 호출, reason=`cleanup_completed`). DEGRADED/OFFLINE 전이는 T06 룰 그대로(메트릭·heartbeat 주도).
+  9. **Token revoke 시점 = 두 경계**: ① cleanup 시작(grace 만료 자동 cleanup 또는 명시 종료) — `revoke_active_tokens_for_reservation`. ② grace 중에는 토큰 verify 통과 유지 (T07 후속 보정 참조 — P6).
+  10. **외부 큐 도입은 보류**: APScheduler in-process가 단일 인스턴스 한계와 정확히 일치. 멀티 인스턴스가 필요해지면 §11 A10과 같은 PR에서 함께 교체.
 - 완료 조건
-  - [ ] 예약 시작 시각 도래 → 세션 ACTIVE 전환, T08 호출
-  - [ ] 종료 10분 전 / 1분 전 알림 디스패치 큐 등록 (T15 채널 사용)
-  - [ ] 종료 시각 도래 → 세션 강제 종료 (Sunshine API `/api/apps/close` 또는 RTSP 종료) + T12 초기화 트리거
-  - [ ] 잡 스케줄러 (Celery/Quartz/cron) 구성
-  - [ ] 단위 테스트: 정시 종료, 조기 종료, 사용자 재접속
-- 산출물: 라이프사이클 워커, 운영 런북
+  - [ ] `POST /reservations/{id}/terminate` 라우트 — 422/409/403/200 매트릭스 테스트 (잘못된 reason · 이미 cleanup · 본인 아님 · 정상)
+  - [ ] `POST /reservations/{id}/disconnect-signal` 라우트 — grace 타이머 시작 + idempotent 검증
+  - [ ] APScheduler integration + 3종 job (`cleanup_starts_at` push / grace expiry / cleanup expiry) + lifespan 기동/종료
+  - [ ] 마이그레이션 — EXCLUDE GIST predicate 보정 (`status = 'CONFIRMED'` 단독) + `explicit_terminated_at` / `grace_started_at` 컬럼 추가
+  - [ ] grace 구간 token verify 통과 / cleanup 시점 자동 revoke 검증
+  - [ ] T11 RPC `agent.execute_cleanup` 호출 + 결과 audit (`cleanup_succeeded` / `cleanup_failed`)
+  - [ ] 호스트 상태 — cleanup 만료 시 자동 IDLE 전이 + 다음 사용자 즉시 사용 가능 (자원 즉시 반환 — A14 P4)
+  - [ ] 단위 테스트: 분 단위 올림 (P2) / grace cap (cleanup 침범 금지) / 명시 종료 후 즉시 사용 가능 / heartbeat `sunshine_running=false` → grace 시작 / heartbeat 누락 OFFLINE → grace 시작
+  - [ ] 통합 테스트: 정시 명시 종료 / 조기 명시 종료(자원 즉시 반환) / 암묵 종료 grace 만료 자동 cleanup / grace 중 재접속 성공
+- 산출물: `broker/app/services/reservation_lifecycle.py` (compute_phase + grace_state + scheduler 인터페이스), APScheduler 설정, `api/v1/reservations.py` 신규 라우트 2종, `services/host_status_monitor.py`에 OFFLINE 전이 시 grace 트리거 연동, `services/token_service.py`에 verify 시 grace 상태 고려 로직, 마이그레이션 (`0004_*` 가칭 — EXCLUDE predicate + 2개 컬럼), `agent/` 측 cleanup RPC 인터페이스 (T11 후속과 공동 산출), 운영 런북 (cleanup 실패 시 수동 복구 절차)
 
 ---
 
@@ -258,17 +291,35 @@
   - [x] Broker 인증 토큰 (`tokens.purpose='agent'` Bearer)
   - [-] 자동 업데이트 채널 — **T20 운영 트랙으로 위임** (v1은 agent_version 보고만)
 - 산출물: `agent/` 디렉터리 일체(`smartclassroom_agent/` 패키지 + tests 34건), `broker/app/services/agent_token_service.py`, `broker/app/api/v1/agents.py`(heartbeat ingest), `broker/app/api/v1/hosts.py` 확장(POST/rotate), `broker/app/api/schemas/agent.py`+`host.py` 확장, `broker/app/api/deps.py::get_agent_host`, `broker/app/core/errors.py` HTTPException dict-detail 일반화, `Settings.agent_token_ttl_days`, broker 테스트 3파일(token_service 5 + hosts_admin 6 + agents_heartbeat 5), CI `agent` job
+- (2026-05-27 정책 변경 후속 — §11 A14, T09 의존) — agent v1 위에 다음 책임을 더한다. v1 코드는 변경 없고 새 모듈만 추가:
+  - **Heartbeat 페이로드에 `session.connection_state: "active"|"disconnected"|"unknown"` 필드 추가** — Sunshine confighttp `/api/clients` 또는 동등 폴링으로 활성 스트림 클라이언트 존재 여부 판정. T09 암묵 종료 감지 채널 중 하나(결정 사항 #4). `unknown`은 Sunshine 미실행/폴링 실패 — Broker가 별도 분기(폴백은 `sunshine_running`).
+  - **신규 RPC `agent.execute_cleanup(reason: str) → {success, details}`** — T12 cleanup 스크립트 실행 + 결과를 다음 heartbeat에 포함하여 Broker T09에 보고. agent 측은 in-process 핸들러; Broker → agent 호출은 polling/long-poll 또는 별도 채널(설계 옵션 — T09 결정 사항 #6에서 일괄 결정).
+  - **Windows shutdown 훅** — hidden window + `WM_QUERYENDSESSION` 인터셉트 + Broker `POST /agents/shutdown-intent` 호출 + 활성 예약 보유 시 차단 유지 / 없으면 즉시 통과. 상세는 T12 결정 사항 #2.
+  - 신규 산출물: `agent/smartclassroom_agent/lifecycle/` (셧다운 훅 + cleanup RPC + connection_state 콜렉터), heartbeat 스키마 확장(`SessionInfo`에 `connection_state` 필드 추가 — `broker/app/api/schemas/agent.py`도 동시 수정).
 
 ### T12. 세션 종료 후 호스트 초기화 스크립트
 - 카테고리: 기타 (Host)
-- 의존성: 없음
+- 의존성: T11 (RPC 인터페이스), T09 (호출자)
+- 상태: 미시작
+- 정책 출처: §11 A14 (cleanup phase에 실행되는 실제 정리 동작 — A14 P3 명시 종료 트리거 ③ 호스트 OS 셧다운 인터셉트 포함)
+- 결정 사항:
+  1. **호출 인터페이스 = T11 agent의 in-process RPC** `agent.execute_cleanup(reason: str) → {success: bool, details: dict}`. agent가 cleanup 스크립트를 subprocess로 실행하고 결과를 다음 heartbeat에 포함하여 Broker T09에 보고. 별도 CLI 명령 (`smartclassroom_agent cleanup --reason X`)도 동봉 — 수동 복구/QA용.
+  2. **Windows 셧다운 훅 (A14 P3 트리거 ③)** — T11 agent 프로세스가 hidden window를 띄워 `WM_QUERYENDSESSION` 메시지를 수신. 수신 시 셧다운을 **일시 차단** (메시지에 `FALSE` return + `ShutdownBlockReasonCreate`로 사용자에게 차단 사유 표시) + Broker `POST /agents/shutdown-intent {host_id}` 호출 → Broker가 활성 예약 보유 시 Moonlight에 명시 종료 모달 push. 모달에서 "종료" → cleanup 정상 흐름 → cleanup 완료 후 agent가 `ShutdownBlockReasonDestroy` + `shutdown /s` 재발행으로 시스템 종료 진행. 모달에서 "취소" → Moonlight 측에서 명시 종료 신호 안 보냄 → agent는 차단을 유지하고 사용자에게 "취소 후 다시 셧다운하시려면 시작 메뉴 → 전원 → 종료를 다시 누르세요" 안내(`ShutdownBlockReason` 메시지 갱신). 활성 예약이 없는 경우(점검 등) Broker가 `200 {action: "proceed"}` 응답 → agent 즉시 차단 해제.
+  3. **스크립트 동작 (cleanup 본체)** — `cleanup-host.ps1` (또는 동등한 Python 모듈):
+     - (a) Sunshine `/api/apps/close` 호출로 활성 스트림 강제 종료 (T10 broker_api_token 사용).
+     - (b) Windows 사용자 강제 로그아웃 — `shutdown /l` 또는 `logoff <session_id>` (활성 사용자가 없으면 skip).
+     - (c) `%TEMP%` / `%USERPROFILE%\Downloads` / 브라우저 캐시(Chrome/Edge/Firefox) / 클립보드 (`Clear-Clipboard` 또는 `Set-Clipboard -Value $null`) 정리.
+     - (d) 다음 사용자 환경 프리셋 복원 — 빈 바탕화면, 최근 문서 목록 초기화, OneDrive 로그아웃.
+  4. **드라이런 모드** — env `SC_CLEANUP_DRYRUN=1` 또는 agent CLI `--dryrun` 시 실제 삭제·로그아웃 없이 "수행할 작업" 로그만 출력. QA 체크리스트에서 사용.
+  5. **실패 처리** — 스크립트가 일부 단계 실패 시(예: 사용자가 응답 없는 앱 보유로 로그아웃 지연) `partial_failure` 분류로 `details`에 단계별 결과 포함. Broker가 audit `cleanup_failed` + 관리자 SSE alert로 노출 (T18 후속), 호스트 status는 그래도 IDLE 전이(다음 사용자가 진입하면 추가 위험 가능성 — T18 admin UI에서 수동 점검 옵션 제공).
+  6. **언어 = PowerShell 5.1 + Python 호출 헬퍼** — Windows 10/11 기본 탑재 PowerShell이 (a)~(d) 모두 가능. Python (T11 agent)이 subprocess로 `pwsh -File` 호출. PowerShell이 stdout JSON으로 결과 반환.
 - 완료 조건
-  - [ ] Windows 사용자 강제 로그아웃 (`shutdown /l` 또는 PowerShell)
-  - [ ] 임시 파일/다운로드/클립보드/브라우저 세션 정리
-  - [ ] 다음 사용자 환경 프리셋 적용
-  - [ ] T11 에이전트가 트리거하는 인터페이스 (CLI 또는 RPC)
-  - [ ] 드라이런 모드 + 운영 모드 분리
-- 산출물: 정리 스크립트 + QA 체크리스트
+  - [ ] `agent.execute_cleanup(reason)` RPC 인터페이스 — T11 agent 측 구현 + Broker T09 측 호출
+  - [ ] `cleanup-host.ps1` (또는 동등 모듈) — (a)~(d) 단계 + 드라이런 + JSON 결과
+  - [ ] Windows `WM_QUERYENDSESSION` 후킹 — hidden window + 차단/해제 + Broker `/agents/shutdown-intent` 호출 + 모달 push 흐름 (활성 예약 보유 시) / 즉시 통과 (활성 예약 없음)
+  - [ ] 드라이런 모드 / 운영 모드 분리 + QA 체크리스트
+  - [ ] 실패 시 audit `cleanup_failed` + 관리자 alert + 호스트 IDLE 전이 (정책상 진행)
+- 산출물: `agent/smartclassroom_agent/cleanup/` 모듈(스크립트 + RPC 핸들러 + 셧다운 훅), `cleanup-host.ps1`, `Broker` 측 `POST /api/v1/agents/shutdown-intent` 라우트 (T09 산출에 포함), QA 체크리스트, 운영 가이드 (수동 cleanup CLI 사용법)
 
 ---
 
@@ -312,6 +363,17 @@
   - **헤드리스 완료는 별도 채널** — `PendingPairingTask`에 `headless` 플래그를 둬 자동 페어링 완료가 공용 `pairingCompleted` 시그널을 안 타게 함. `ComputerModel`/CLI pair가 중복 에러 다이얼로그를 띄우는 것 방지.
 - e2e 검증 (2026-05-24, 단일 PC — host·Broker·Sunshine·Moonlight 한 PC): 4종 시나리오 전부 통과 — ① 미페어링 호스트 원클릭 자동 페어링→스트림(클릭→스트림 ~4s, **입력 0회 KPI 달성**), ② 이미 페어링됨 `(already paired)` 페어링 건너뛰고 바로 스트림(~3s), ③ Broker 미도달 `broker_unreachable` 폴백(~6s, hang 없음), ④ 페어링 실패(잘못된 `sunshine_broker_token`) `sunshine_unauthorized` 폴백(~1s, hang 없음). 같은 PC loopback이라 스트림 화면은 검정(`BUILD.md` §7) — 정상. e2e 중 발견한 T14 버그 1건(broker URL percent-encoding 디코딩 누락 — `main.cpp` 두 곳 `queryItemValue("broker", QUrl::FullyDecoded)`)은 보정 커밋(`fa743449`) + 패치 **0011-T14-decode-percent-encoded-broker-URL-param.patch**로 분리.
 - 산출물: 패치 0009/0010/0011 (`client-patches/moonlight-qt/`), `BUILD.md` §5.9 입력 0회 수동 e2e 체크리스트.
+- (2026-05-27 정책 변경 후속 — §11 A14, 패치 시리즈 0012~ 예정) — 자동 페어링·자동 스트림 위에 종료 모달과 명시/암묵 종료 신호 라우트를 더한다. 패치 번호 0012부터 순차, 빌드 toolchain (Qt 6.7 `msvc2019_64` + MSVC v143/v144) 동일:
+  - **0012 종료 모달 컴포넌트** — QML 모달, 카피는 §11 A14 P5 ("예약 시간 종료 전 종료하시면 사용권이 반납됩니다 …"). "종료" / "취소" 두 버튼. 단축키 0013·자동 타이머 0014·OS 셧다운 0016가 모두 이 모달을 공유.
+  - **0013 단축키 인터셉트** — 업스트림 `Ctrl+Alt+Shift+Q` (즉시 종료)를 0012 모달 표시로 변경. 모달 "종료" 클릭 시 기존 종료 경로 + 명시 종료 신호(0015).
+  - **0014 `cleanup_starts_at` 자동 타이머** — `ScBrokerClient`가 connect 응답의 `ends_at` (+ A14 P1 cleanup 길이)를 보관, `cleanup_starts_at = ends_at - 10min` 시점에 로컬 타이머 fire → 0012 모달. 서버 측 T09 push와 이중 안전망. 사용자가 모달 "종료" 클릭 안 해도 cleanup_starts_at 도달 시 Broker T09가 자동 cleanup 시작.
+  - **0015 Broker 신호 라우트 통신** — Moonlight 측 `ScBrokerClient::reportExplicitTermination(reservationId, reason: "user_modal"|"shortcut"|"host_shutdown")` → `POST /api/v1/reservations/{id}/terminate`. `ScBrokerClient::reportDisconnect(reservationId)` → `POST /api/v1/reservations/{id}/disconnect-signal` (best-effort, 비정상 disconnect 감지 시).
+  - **0016 호스트 셧다운 모달 push 수신** — Broker → Moonlight 채널이 필요(호스트 측 OS 셧다운 인터셉트는 T11 agent가 감지, T11 → Broker → Moonlight 경로). 채널 옵션 (T14 후속 설계에서 일괄 결정):
+    - 옵션 A: agent가 호스트 filesystem(예: `%TEMP%/sc-modal-trigger.json`)에 신호 파일을 두고 Moonlight 클라이언트(같은 PC가 아닐 수 있음 — 학생 PC)는 폴링 불가 → **부적합**.
+    - 옵션 B: Broker가 Moonlight에 별도 channel (WebSocket / SSE). T15(종료 임박 알림)과 같은 채널 통합 가능.
+    - 옵션 C: Moonlight가 Broker에 `GET /reservations/{id}/notifications` 짧은 폴링(예: 5s). 단순하지만 비효율.
+    옵션 B가 1순위 — T15와 합쳐 단일 채널.
+- (2026-05-27 정책 변경 후속 — Broker 측 결합 책임) — Broker는 T08 PIN-relay 모델 그대로지만, T14의 0015 라우트 호출이 Broker T09 신규 라우트와 직결. 라우트 계약은 T09 결정 사항 #3 참조.
 
 ---
 
@@ -320,10 +382,11 @@
 ### T15. 종료 임박 알림 채널 (10분/1분 전)
 - 카테고리: 풀스택
 - 의존성: T09, T13
+- 정책 출처: §11 A14 — 10분 전 시점은 **`cleanup_starts_at`과 일치**(A14 P1). 그 시점의 노출은 T14 후속 0014가 띄우는 **명시 종료 모달**과 같은 사건 — T15 알림과 모달은 같은 push 채널을 공유(T14 후속 0016 옵션 B와 결합). 1분 전 알림은 cleanup 진행 중임을 알리는 추가 토스트.
 - 완료 조건
   - [ ] **1차 채택**: Moonlight 클라이언트 토스트 (Sunshine fork 부담 회피). T13 인앱 알림 위젯에 채널 구현
-  - [ ] Broker → Moonlight 채널: WebSocket 또는 짧은 폴링, 메시지 페이로드 스펙(JSON) 합의
-  - [ ] 표시 검증: 10분 / 1분 전 시각 정확도 ±10초
+  - [ ] Broker → Moonlight 채널: WebSocket 또는 짧은 폴링, 메시지 페이로드 스펙(JSON) 합의 — T14 후속 0016과 단일 채널로 통합
+  - [ ] 표시 검증: 10분 / 1분 전 시각 정확도 ±10초 (10분 전 = `cleanup_starts_at` 명시 종료 모달, 1분 전 = cleanup 진행 토스트)
   - [ ] 알림 ACK 기록 (KPI/감사 목적)
   - [ ] (옵션) Sunshine OSD 채널은 후속 이슈로 분리
 - 산출물: 알림 모듈 + UX 검증 영상
@@ -363,6 +426,7 @@
   - [x] 본인 예약 목록 / 취소 / "변경=취소+새 예약" UX 안내
   - [x] 접근성 키보드 내비게이션 (`role=grid` + roving tabindex + arrow/Home/End/PageUp/PageDown/Enter/Esc + 모달 focus trap)
 - 산출물: `frontend/` 디렉터리 일체(트리 38 + test 7 + msw 인프라), `broker/app/api/v1/hosts.py` + `schemas/host.py` + `tests/test_hosts_list.py`(T06 부분 선행), `Settings.cors_origins` 기본값 `localhost:5173` 추가, `.github/workflows/ci.yml` `frontend` job 신설(pnpm + lint + typecheck + test + build), README/CLAUDE.md frontend 가이드 추가
+- (2026-05-27 정책 변경 후속 — §11 A14 P5) `ReservationModal`에 2줄 안내 카피 추가: ① "실 사용 시간: HH:MM ~ HH:MM" (= `starts_at` ~ `ends_at - 10min`) ② "마지막 10분(HH:MM ~ HH:MM)은 개인정보 보호를 위한 자동 정리 시간입니다." 컴포넌트 변경만이며 캘린더 그리드·시간 헬퍼는 변경 없음. T21이 흡수한 모달도 동일 카피 적용(`pages/CalendarPage.tsx`의 `ReservationModal` 인스턴스).
 
 ### T17. 가용 PC 리스트 + '접속' 버튼
 - 카테고리: 프런트엔드
@@ -383,6 +447,7 @@
   - [x] 핸들러 미등록 OS 감지 시 다운로드 가이드 노출 — `launchMoonlight` 휴리스틱 + `MoonlightInstallGuide`
   - [x] 사용자 입력 0개 KPI 자동 측정 hook 삽입 — `token_issue` audit `detail.client`
 - 산출물: `frontend/` — `pages/AvailableHostsPage.tsx`(신규) + `pages/MyReservationsPage.tsx`(접속 버튼) + `api/connect.ts` + `api/hosts.ts`/`api/reservations.ts` 확장 + `lib/moonlight.ts` + `components/MoonlightInstallGuide.tsx` + `hooks/useMoonlightConnect.ts` + `routes`/`Layout` 갱신 + `test/msw/handlers.ts` 확장 + 테스트 3파일. `broker/` — `api/v1/reservations.py`(`POST /reservations/instant` + connect 선택적 body + `_issue_connect_token_response` 공용 헬퍼) + `api/v1/hosts.py`(`/available` 무파라미터 모드) + `services/reservation.py::create_instant_reservation`/`_instant_window`(다음 예약 cap)/`list_instant_available_hosts`/`_next_reservation_start` + `api/schemas`(`ConnectTokenRequest`/`InstantReservationRequest`/`ip_address`/`HostAvailable.available_until`) + 테스트(test_instant_reservation 6 + test_token_issue 회귀 1)
+- (2026-05-27 영향 — §11 A14) cleanup 정책이 즉시 사용에도 적용 — `_instant_window`의 `ends_at` 계산 로직은 그대로지만 **사용 가능 시간 = `ends_at - 10min`**. 예: 즉시 사용 윈도우 `[14:00, 16:30)` → 사용 가능 `[14:00, 16:20)`, cleanup `[16:20, 16:30)`. `available_until`(`HostAvailable`)도 `cleanup_starts_at` 기준으로 조정 — 프런트 부분 바·"N분/시간 사용 가능" 표시가 사용 가능 시간만 노출. 다음 예약 cap 로직(`_next_reservation_start`)은 `ends_at`(원시) 기준 그대로 (EXCLUDE GIST가 `[)` 반열림이라 경계 일치 OK). 30분짜리 자투리 즉시 사용은 사용 가능 20분.
 
 ### T18. 관리자 모니터링 대시보드 + KPI
 - 카테고리: 프런트엔드
@@ -421,6 +486,7 @@
   - [x] 캘린더 셀 **드래그로 예약 시간 범위 선택** — 드래그로 만든 예약은 `POST /reservations`를 거쳐 30분 그리드 정렬 유지
   - [x] T17 백엔드/API(`/hosts/available`+`available_until`, `POST /reservations/instant`, `lib/moonlight.ts`, `useMoonlightConnect`, `MoonlightInstallGuide`)는 그대로 재사용 — 표현 계층만 재설계, 백엔드 변경 없음
 - 산출물: `frontend/` — `pages/CalendarPage.tsx`(즉시 사용/2일 윈도우 통합) + `components/CalendarGrid.tsx`(96칸·44px·부분 바·드래그·자동 스크롤 재설계) + `components/ReservationModal.tsx`(`initialDurationMinutes` 프리필) + `lib/time.ts`(`formatAvailableWindow` 이전 + `kstWindowEnd`, `kstEndOfDay` 제거) + `components/Layout.tsx`/`routes/index.tsx`(`/connect` 제거) + `pages/AvailableHostsPage.tsx`·테스트 삭제 + `pages/CalendarPage.test.tsx` 신규 + `CalendarGrid`/`ReservationModal`/`time` 테스트 보강
+- (2026-05-27 정책 변경 후속 — §11 A14 P5) 캘린더 그리드는 변경 없음 (예약 시간 = 30분 슬롯 단위 그대로). 모달 카피만 T16 후속에서 다룬다. 그리드 셀 안에 cleanup 구간을 음영으로 시각화하는 옵션은 v1 범위 외 — 후속 UX 결정이 필요해지면 §11에 항목 신설. T09가 명시 종료한 예약은 `status='COMPLETED'`로 캘린더에서 즉시 사라지므로(EXCLUDE 보정 후) 다른 사용자의 즉시 사용 가능 호스트로 다시 노출됨 — `hostsQuery`/`calendarQuery` 폴링이 ~15초 내 반영, T09 호스트 IDLE 전이 SSE가 추가되면 즉시 반영.
 
 ### T22. 사용자 동시 예약 1건 제한 (자기 예약 겹침 금지)
 - 카테고리: 백엔드 (예약 도메인 / T05 정책)
@@ -494,6 +560,8 @@ flowchart LR
     T08 --> T19
     T17 --> T19
     T09 -. trigger .-> T12
+    T11 -. heartbeat connection_state + cleanup RPC .-> T09
+    T14 -. terminate / disconnect-signal .-> T09
     T04a --> T16
     T05 --> T16
     T06 --> T17
@@ -524,8 +592,8 @@ flowchart LR
 
 - **M1 (인증 뼈대 + Mock)**: T03·T04a·T16 — Mock 인증 위에서 F1 단독 동작. **3/3 완료 (2026-05-12)** — T16 v1까지 도달, 자택 PC에서 Mock 로그인 → 캘린더 → 예약까지 사용자 입력 0회 시나리오 가능. T01·T02는 행정 트랙으로 병행 시작.
 - **M2 (예약·집계)**: T05·T11·T06·T17 — 예약 + 가용 PC 노출 (T04a 위에서 작동). **4/4 완료 (2026-05-18)** — 예약 + 가용 PC 노출 + 원클릭 접속/즉시 사용까지 동작.
-- **M3 (자동 접속)**: T10·T13·T07·T08·T14·T15·T19·T12 — F2/F3/F4 완성.
-- **M4 (운영 전환)**: T04b·T01·T02·T18·T09 강화·T20 (+ `pmi-sso-bridge` 사이드카 배포) — CNU SSO swap-in을 운영 컷오버 마일스톤으로 명시. F5 + 정식 배포.
+- **M3 (자동 접속)**: T10·T13·T07·T08·T14·T15·T19·T12 — F2/F3/F4 완성. T12·T15·T19는 §11 A14 정책 반영 필요(M3 시작 시점에 A14 확정 완료).
+- **M4 (운영 전환)**: T04b·T01·T02·T18·**T09 (§11 A14 본구현 — cleanup/grace/명시-암묵 분류, 신규 task 없이 흡수)** + T11 후속 (셧다운 훅·`agent.execute_cleanup` RPC·heartbeat `connection_state`) + T14 후속 패치 0012~0016 (Moonlight 종료 모달·단축키 인터셉트·broker 신호 라우트) · T20 (+ `pmi-sso-bridge` 사이드카 배포) — CNU SSO swap-in을 운영 컷오버 마일스톤으로 명시. F5 + 정식 배포 + 라이프사이클 정책 완성.
 
 ---
 
@@ -534,7 +602,11 @@ flowchart LR
 - PRD-instruction.md 8개 MVP 요구사항이 §0-1 매핑대로 모두 통과.
 - PRD KPI 4종이 T18 대시보드에서 측정 가능 + 베이스라인 수치 1주 이상 수집.
 - "자택 PC → 웹 포털 SSO → 예약 → 원클릭 접속" 사용자 입력 0회 시나리오 영상 1건 확보.
-- T15 종료 알림(10분/1분) → T09 강제 종료 → T12 초기화 → T11 IDLE 복귀까지 무인 재현 1회 이상.
+- 예약 라이프사이클 무인 재현 1회 이상 (§11 A14 정책 기준):
+  - **정시 명시 종료**: `cleanup_starts_at` 자동 모달 push → 사용자 "종료" → cleanup 즉시 시작 → T12 cleanup 완료 → 호스트 IDLE 즉시 복귀.
+  - **암묵 종료 grace 자동 cleanup**: 사용 중 네트워크 끊김 / Moonlight 강제 종료 / sunshine 종료 중 하나 → grace 시작(분 단위 올림) → grace 만료 후 cleanup 자동 시작 → IDLE 복귀.
+  - **호스트 OS 셧다운 인터셉트**: 강의실 PC "시작→전원→시스템 종료" → 셧다운 일시 차단 + Moonlight에 명시 종료 모달 push → "종료" → cleanup → 시스템 종료 진행.
+  - 위 3종 시나리오 모두 T15 종료 임박 알림(10분/1분 전)이 모달로 노출됨을 동시 검증.
 
 ---
 
@@ -556,3 +628,12 @@ flowchart LR
 - **A11 (T17 "끊으면 IDLE 복귀" 범위 외, 2026-05-18)**: 사용자가 moonlight↔sunshine 스트리밍을 종료해도 ① 웹/접속 페이지는 스트림 종료를 감지할 채널이 없고(`moonlight://` 실행 후 브라우저는 세션에서 이탈), ② 호스트는 활성 예약 + sunshine 프로세스 생존이 유지되는 한 T06 룰상 IN_USE로 남으며(`sunshine_running`은 "프로세스 생존"이지 "스트림 활성"이 아님), ③ 상태만 IDLE로 바꿔도 CONFIRMED 예약 행이 EXCLUDE GIST 슬롯을 계속 점유한다. 따라서 "끊으면 IDLE 복귀"는 스트림 종료 자동 감지(T10 Sunshine fork 또는 T11 에이전트가 스트림 활성/프로세스 생존을 구분) + 예약 조기 종료(예약 도메인)의 조합이며 T09(세션 라이프사이클 매니저)가 일괄 처리한다. connect 토큰은 연결 종료와 무관 — `expires_at = reservation.ends_at`로 예약 윈도우에 묶여 있다(현행 유지).
 - **A13 (`sunshine_port` 시멘틱 어긋남, 2026-05-24 발견 — 기록만, 미해결)**: Broker `HostCreate.sunshine_port`의 스키마 기본값(`broker/app/api/schemas/host.py:47`)이 `47984`(Sunshine HTTPS 스트리밍 포트)인데, 프런트 `buildMoonlightUrl`이 이 값을 그대로 `moonlight://...&port=`에 싣고 moonlight-qt 측은 그 값을 **HTTP 폴링 포트**(47989)로 해석한다 — `ComputerManager::requestConnect`가 `addNewHost(NvAddress(address, port))`로 받아 `NvHTTP::getServerInfo`를 HTTP로 보내므로. e2e(2026-05-24)에서 호스트를 기본값으로 등록하니 Moonlight가 `127.0.0.1:47984`에 HTTP로 요청해 "지정된 PC에 연결할 수 없습니다" 폴백. **임시방편**: 호스트 등록 시 `sunshine_port=47989` 명시. **정식 해결 후보** ① `HostCreate` 기본값을 47989로 변경 + 명명 명확화(예: `sunshine_http_port`), ② 프런트 `buildMoonlightUrl`이 변환(`port = host.sunshine_port - 5`), ③ schema에 HTTP/HTTPS 포트 컬럼을 분리. v1 deployment에서는 ①이 가장 단순 — Sunshine 기본값들이 HTTP 47989/HTTPS 47984로 5 차이 고정이라 단일 포트 필드로 충분하고 의미만 통일하면 됨. 별도 정리 태스크.
 - **A12 (모델↔마이그레이션 drift, 2026-05-22 발견 — 기록만, 미해결)**: `alembic check`가 잡는 기존 drift 3건. T08/T13과 무관하며 `0001`/`0002`(2026-05-11)부터 존재 — 별도 정리 태스크로 다룬다. ① **`id` 컬럼 타입**: 마이그레이션은 전 테이블 `id`가 `BigInteger`인데 모델 `domain/_mixins.py::IdMixin.id`는 `mapped_column(primary_key=True, ...)`로 타입 미지정 → SQLAlchemy가 `Mapped[int]`에서 32비트 `Integer`로 추론. FK 컬럼들은 명시적 `BigInteger`라 일치 — PK만 어긋남. ② **`server_default`**: 마이그레이션은 `users.role`/`hosts.status`/`reservations.status`/`sessions.state`에 문자열 `server_default`를 두는데 모델은 Python-side `default=`만 선언(예외: `hosts.host_metadata`는 `server_default="{}"` 명시 → 일치). ③ **`tokens.host_id` nullable**: `0002`가 컬럼을 nullable로 변경했으나 모델 `domain/token.py`는 여전히 `Mapped[int]` + `nullable=False`. 셋 다 autogenerate 사각지대(EXCLUDE/JSONB default/부분 인덱스/GIN·GIST)가 **아니라** `alembic check`가 정상적으로 잡은 drift — DB(마이그레이션)가 진실이므로 수정은 모델 3곳을 마이그레이션에 맞추는 것(동작 무변경). T08의 `sunshine_broker_token`(`0003`↔`domain/host.py`)은 drift 없음. ruff format도 `broker/app/api/v1/reservations.py`에 기존 포맷 drift가 보고됨 — 같은 정리 태스크에 포함.
+- **A14 (예약 cleanup / grace / 명시-암묵 종료 정책, 2026-05-27 결정)**: 예약 시간을 사용 구간 + cleanup 구간으로 분할하고, 종료 이벤트를 명시(explicit)/암묵(implicit)으로 분류한다. 이 정책의 **단일 출처(single source of truth)** — T09/T12/T11/T14 후속/T07/T17/T16 보정은 모두 본 항목을 참조하며 수치를 본문에 중복 정의하지 않는다.
+  - **P1. Cleanup = 예약 종료 직전 10분 (고정)**. env `reservation_cleanup_minutes=10`. `cleanup_starts_at = reservation.ends_at - 10min`. 실 사용 시간 = `ends_at - 10min`. 예: `[14:00, 15:00)` 예약 → 사용 가능 `[14:00, 14:50)`, cleanup `[14:50, 15:00)`. 30분 슬롯 1칸 예약도 동일 규칙(사용 20분) — 의식적 수용.
+  - **P2. Grace period = 암묵 종료에 한정, 최대 10분, cleanup 침범 금지**. env `reservation_grace_max_minutes=10`. `t_disc`(암묵 종료 시각)를 분 단위 올림한 `t_grace_start = ceil_minute(t_disc)`, `grace_end = min(t_grace_start + 10min, cleanup_starts_at)`. `grace_end <= t_grace_start` 이면 grace 0초(이미 cleanup 안에서 끊긴 경우). grace 구간 동안은 같은 사용자가 같은 connect token으로 **재접속 가능**(P6).
+  - **P3. 종료 이벤트 분류 (3개 명시 트리거)**: ① 접속 후 예약 종료 10분 전(= `cleanup_starts_at` 도달) — Moonlight 자체 타이머 자동 모달, ② 사용 중 `Ctrl+Alt+Shift+Q` — Moonlight 인터셉트, ③ 호스트 "시작→전원→시스템 종료" 클릭 — T11 agent가 `WM_QUERYENDSESSION` 후킹 → Broker 통해 Moonlight에 모달 push. 세 경우 모두 같은 모달, "종료" 클릭 시점이 명시 종료, "취소"는 세션 유지. **Broker가 explicit 신호를 받지 않은 모든 disconnect는 암묵 종료**(기본값 안전). 분류 판정 주체 = Broker.
+  - **P4. 명시 종료 = 사용권 반납 (자원 즉시 반환)**. cleanup 즉시 시작(`cleanup_starts_at`가 동적으로 `now`로 당겨짐). cleanup 완료 시 `reservation.ends_at = now`, `status = 'COMPLETED'`. EXCLUDE GIST predicate를 `WHERE status = 'CONFIRMED'`로 변경(현재 `IN ('CONFIRMED','COMPLETED')` — 마이그레이션 필요) → 호스트 즉시 IDLE, 다른 사용자가 즉시 사용으로 잡을 수 있음. 본인 재이용은 새 예약 또는 즉시 사용.
+  - **P5. 캘린더 UX — 예약 확인 모달 카피만**. 캘린더 그리드는 기존 30분 슬롯 단위(`ends_at` 기준) 그대로. `ReservationModal`에 2줄 추가: "실 사용 시간: 14:00 ~ 14:50" / "마지막 10분(14:50 ~ 15:00)은 개인정보 보호를 위한 자동 정리 시간". 명시 종료 모달 카피: "예약 시간 종료 전 종료하시면 사용권이 반납됩니다. 재이용은 새 예약 또는 빈 PC 즉시 사용으로 가능합니다. 저장하지 않은 파일은 자동 삭제됩니다."
+  - **P6. Connect token expiry = `cleanup_starts_at`**. cleanup 시작 시 `revoke_active_tokens_for_reservation` 호출. **단 grace 구간 동안은 이미 발급된 토큰의 verify 통과 유지** — grace는 T09가 관리. 명시 종료 시 token 즉시 revoke. 발급 게이트도 `starts_at - grace_seconds ~ cleanup_starts_at`으로 조정.
+  - **구현 분담 (신규 task 없음)**: T09(상태 머신·이벤트 분류·grace 타이머·cleanup 트리거·신규 라우트 2종·마이그레이션) / T12(cleanup 스크립트·Windows 셧다운 훅·드라이런) / T14 후속 패치 0012~(Moonlight 모달·단축키 인터셉트·broker 통신 라우트) / T11 후속(agent 셧다운 훅·`agent.execute_cleanup` RPC·heartbeat `connection_state` 필드) / T07·T17·T16·T21은 본문 1~2줄 후속 보정만.
+  - **CLAUDE.md 갱신은 T09 본구현 머지 PR에서 함께** — 코드 없는 상태에서 "예정" 항목을 카탈로그에 넣으면 신호/잡음 비율이 떨어진다. EXP.md/PRD.md만 선반영.

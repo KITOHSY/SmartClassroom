@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -23,6 +24,7 @@ class SessionInfo(BaseModel):
     sunshine_running: bool
     active_user: str | None = Field(default=None, max_length=64)
     active_clients: int = Field(default=0, ge=0)
+    connection_state: Literal["active", "disconnected", "unknown"] | None = None
 
 
 class GpuMetric(BaseModel):

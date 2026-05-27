@@ -266,6 +266,94 @@ async def test_heartbeat_idempotent_no_extra_audit_when_status_unchanged(
     assert count == 1
 
 
+# --- T11 후속: connection_state 필드 ----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_with_connection_state_persists(auth_client: AuthClientFactory) -> None:
+    """T11 후속 — session.connection_state가 host_metadata에 저장."""
+    host_id, raw_token = await _enroll_host(auth_client)
+    anon = await _make_anon_client()
+    try:
+        body = _heartbeat_body()
+        body["session"] = {
+            "sunshine_running": True,
+            "active_user": "alice",
+            "active_clients": 1,
+            "connection_state": "active",
+        }
+        r = await anon.post(
+            "/api/v1/agents/heartbeat",
+            json=body,
+            headers={"Authorization": f"Bearer {raw_token}"},
+        )
+        assert r.status_code == 200, r.text
+    finally:
+        await anon.aclose()
+
+    from broker.app.domain.host import Host
+    from broker.app.infra.db import get_session_factory
+
+    factory = get_session_factory()
+    async with factory() as session:
+        host = await session.get(Host, host_id)
+        assert host is not None
+        assert host.host_metadata["metrics"]["session"]["connection_state"] == "active"
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_without_connection_state_legacy_agent(
+    auth_client: AuthClientFactory,
+) -> None:
+    """T11 v1 (legacy) agent가 connection_state 없이 보내도 통과 + None으로 저장."""
+    host_id, raw_token = await _enroll_host(auth_client)
+    anon = await _make_anon_client()
+    try:
+        r = await anon.post(
+            "/api/v1/agents/heartbeat",
+            json=_heartbeat_body(),  # session에 connection_state 없음 (legacy)
+            headers={"Authorization": f"Bearer {raw_token}"},
+        )
+        assert r.status_code == 200, r.text
+    finally:
+        await anon.aclose()
+
+    from broker.app.domain.host import Host
+    from broker.app.infra.db import get_session_factory
+
+    factory = get_session_factory()
+    async with factory() as session:
+        host = await session.get(Host, host_id)
+        assert host is not None
+        sess_meta = host.host_metadata["metrics"]["session"]
+        assert sess_meta.get("connection_state") is None
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_invalid_connection_state_returns_422(
+    auth_client: AuthClientFactory,
+) -> None:
+    """connection_state가 Literal 밖 값이면 422."""
+    _, raw_token = await _enroll_host(auth_client)
+    anon = await _make_anon_client()
+    try:
+        bad = _heartbeat_body()
+        bad["session"] = {
+            "sunshine_running": True,
+            "active_user": None,
+            "active_clients": 0,
+            "connection_state": "bogus",
+        }
+        r = await anon.post(
+            "/api/v1/agents/heartbeat",
+            json=bad,
+            headers={"Authorization": f"Bearer {raw_token}"},
+        )
+        assert r.status_code == 422, r.text
+    finally:
+        await anon.aclose()
+
+
 @pytest.mark.asyncio
 async def test_heartbeat_invalid_payload_returns_422(auth_client: AuthClientFactory) -> None:
     """cpu_pct=200 (range 위반) → 422."""

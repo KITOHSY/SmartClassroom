@@ -20,6 +20,10 @@ class AgentConfig(BaseModel):
     agent_token: str = Field(min_length=16, max_length=128)
     interval_seconds: float = Field(default=30.0, ge=1.0, le=600.0)
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
+    sunshine_serverinfo_url: HttpUrl = Field(
+        default=HttpUrl("http://127.0.0.1:47989/serverinfo"),
+    )
+    sunshine_query_timeout_seconds: float = Field(default=3.0, ge=0.5, le=30.0)
 
     @property
     def broker_url_str(self) -> str:

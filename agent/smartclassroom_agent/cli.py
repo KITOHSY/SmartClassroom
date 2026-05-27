@@ -53,6 +53,7 @@ def run_cmd(config: ConfigPath = Path("agent.yaml")) -> None:
                 client,
                 cfg.broker_url_str,
                 interval_seconds=cfg.interval_seconds,
+                cfg=cfg,
             )
 
     asyncio.run(_main())
@@ -75,6 +76,7 @@ def doctor_cmd(config: ConfigPath = Path("agent.yaml")) -> None:
                 cfg.broker_url_str,
                 interval_seconds=0.1,
                 max_cycles=1,
+                cfg=cfg,
             )
 
     cycles = asyncio.run(_main())

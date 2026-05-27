@@ -9,7 +9,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from smartclassroom_agent import __version__
 from smartclassroom_agent.client import BrokerClient
@@ -19,13 +19,23 @@ from smartclassroom_agent.collectors.session import collect_session
 from smartclassroom_agent.collectors.system import boot_time, collect_system
 from smartclassroom_agent.logging import get_logger
 
+if TYPE_CHECKING:
+    from smartclassroom_agent.config import AgentConfig
+
 logger = get_logger(__name__)
 
 
-async def build_heartbeat_payload(broker_url: str) -> dict[str, Any]:
-    """동기 collector는 to_thread, RTT 측정은 직접 await."""
+async def build_heartbeat_payload(
+    broker_url: str,
+    *,
+    cfg: AgentConfig | None = None,
+) -> dict[str, Any]:
+    """동기 collector는 to_thread, session/RTT 측정은 직접 await.
+
+    cfg가 주어지면 Sunshine /serverinfo 폴링까지 포함 → connection_state 채움.
+    """
     sys_snap = await asyncio.to_thread(collect_system)
-    sess_snap = await asyncio.to_thread(collect_session)
+    sess_snap = await collect_session(cfg=cfg)
     gpu_snap = await asyncio.to_thread(collect_gpu)
     rtt_ms = await measure_rtt(broker_url)
     return {
@@ -45,6 +55,7 @@ async def run_heartbeat_loop(
     interval_seconds: float = 30.0,
     stop_event: asyncio.Event | None = None,
     max_cycles: int | None = None,
+    cfg: AgentConfig | None = None,
 ) -> int:
     """heartbeat 송신 loop. 실행한 cycles 수 반환.
 
@@ -57,7 +68,7 @@ async def run_heartbeat_loop(
         if stop_event is not None and stop_event.is_set():
             break
         try:
-            payload = await build_heartbeat_payload(broker_url)
+            payload = await build_heartbeat_payload(broker_url, cfg=cfg)
             response = await client.post_heartbeat(payload)
             logger.info(
                 "heartbeat ok",

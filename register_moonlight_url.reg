@@ -1,0 +1,8 @@
+REGEDIT4
+
+[HKEY_CURRENT_USER\Software\Classes\moonlight]
+@="URL:Moonlight Protocol"
+"URL Protocol"=""
+
+[HKEY_CURRENT_USER\Software\Classes\moonlight\shell\open\command]
+@="\"D:\\Hongsun\\moonlight-qt\\app\\release\\Moonlight.exe\" \"%1\""

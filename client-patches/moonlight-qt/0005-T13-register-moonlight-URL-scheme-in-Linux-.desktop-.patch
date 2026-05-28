@@ -1,0 +1,48 @@
+From 064635c67f11c2657a8f3f33761b303c6abe4839 Mon Sep 17 00:00:00 2001
+From: KITOHSY <hongsun900912@gmail.com>
+Date: Wed, 20 May 2026 10:06:55 +0900
+Subject: [PATCH 05/12] T13: register moonlight:// URL scheme in Linux .desktop
+ file
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+SmartClassroom T13 — adds MimeType=x-scheme-handler/moonlight; and an
+%u placeholder on the Exec line so that xdg-open and browsers route
+moonlight://connect?... URLs (issued by the SmartClassroom Broker
+frontend) to this binary. main.cpp's URL handler then expands the URL
+into the `connect` CLI subcommand and dispatches into ComputerManager.
+
+Distro packages (apt/rpm) and Flatpak builds pick the new MimeType up
+when update-desktop-database runs during package install. AppImage
+users need a one-time `xdg-mime default com.moonlight_stream.Moonlight.desktop
+x-scheme-handler/moonlight` because AppImages do not run the desktop-
+database hook; that step is documented in client-patches/moonlight-qt/
+BUILD.md.
+---
+ app/deploy/linux/com.moonlight_stream.Moonlight.desktop | 7 ++++++-
+ 1 file changed, 6 insertions(+), 1 deletion(-)
+
+diff --git a/app/deploy/linux/com.moonlight_stream.Moonlight.desktop b/app/deploy/linux/com.moonlight_stream.Moonlight.desktop
+index a393b247..9d4e2646 100644
+--- a/app/deploy/linux/com.moonlight_stream.Moonlight.desktop
++++ b/app/deploy/linux/com.moonlight_stream.Moonlight.desktop
+@@ -1,9 +1,14 @@
+ [Desktop Entry]
+ Name=Moonlight
+ Comment=Stream games and other applications from another PC running Sunshine or GeForce Experience
+-Exec=moonlight
++Exec=moonlight %u
+ Icon=moonlight
+ Terminal=false
+ Type=Application
+ Categories=Qt;Game;
+ Keywords=nvidia;gamestream;stream;sunshine;remote play;
++# SmartClassroom T13 — claim the moonlight:// URL scheme so xdg-open / browsers
++# route moonlight://connect?... URLs (from the SmartClassroom Broker frontend)
++# to this binary. `%u` carries the URL as argv[1]; main.cpp expands it into
++# the `connect` CLI subcommand and dispatches to ComputerManager.
++MimeType=x-scheme-handler/moonlight;
+-- 
+2.54.0.windows.1
+

@@ -1,7 +1,7 @@
 From bf478dbfadb917b6493afd6b2159b314a80a19b0 Mon Sep 17 00:00:00 2001
 From: KITOHSY <hongsun900912@gmail.com>
 Date: Thu, 21 May 2026 09:51:32 +0900
-Subject: [PATCH 07/11] =?UTF-8?q?T13:=20drop=20setUrlHandler=20call=20(Qt?=
+Subject: [PATCH 07/12] =?UTF-8?q?T13:=20drop=20setUrlHandler=20call=20(Qt?=
  =?UTF-8?q?=206=20signature=20mismatch)=20=E2=80=94=20defer=20to=20v1.1?=
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8

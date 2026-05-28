@@ -1,7 +1,7 @@
 From fa743449fc1123d553fd6a7e7cc3f3b0ad251fe6 Mon Sep 17 00:00:00 2001
 From: KITOHSY <hongsun900912@gmail.com>
 Date: Sun, 24 May 2026 01:18:34 +0900
-Subject: [PATCH 11/11] T14: decode percent-encoded broker URL param
+Subject: [PATCH 11/12] T14: decode percent-encoded broker URL param
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
